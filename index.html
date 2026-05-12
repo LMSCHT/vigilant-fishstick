@@ -106,23 +106,19 @@
     function Mode1() {
       const DIRECTIONS = { 'NW_SE': 'A (左上進)', 'SW_NE': 'B (左下進)', 'NE_SW': 'C (右上進)', 'SE_NW': 'D (右下進)' };
       const ANGLES = [{value:0,label:'0°(直)'},{value:45,label:'45°'},{value:90,label:'90°(橫)'},{value:135,label:'135°'},{value:180,label:'180°'},{value:225,label:'225°'},{value:270,label:'270°'},{value:315,label:'315°'}];
-      
       const O_DIRECTIONS = { 'AUTO': '自動判斷', 'CW': '強制順時針', 'CCW': '強制逆時針' };
       const O_ANGLES = [{value:0,label:'0° (不偏移)'},{value:45,label:'+45° 偏移'},{value:90,label:'+90° 偏移'},{value:135,label:'+135° 偏移'},{value:180,label:'+180° 偏移'},{value:225,label:'+225° 偏移'},{value:270,label:'+270° 偏移'},{value:315,label:'+315° 偏移'}];
 
       const [rawInput, setRawInput] = useState('');
       const [points, setPoints] = useState([]);
-      
       const [outputs, setOutputs] = useState({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '' });
       const [outputTab, setOutputTab] = useState('planting');
       const [outputFormat, setOutputFormat] = useState('gpx'); 
       const [copied, setCopied] = useState(false);
-      
       const [speedKmH, setSpeedKmH] = useState(18);
       const [stats, setStats] = useState({ distKm: 0, timeMin: 0 });
       const [toastMsg, setToastMsg] = useState('');
       const [diagnosticMsg, setDiagnosticMsg] = useState(null);
-      
       const [patternType, setPatternType] = useState('O');
 
       const svgRef = useRef(null);
@@ -133,29 +129,21 @@
         const lines = rawInput.split('\n');
         const newPoints = []; let idCounter = 1;
         const seenCoords = new Set();
-        let duplicateCount = 0; let totalCount = 0;
-        
         lines.forEach(line => {
           const match = line.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
           if (match) {
-            totalCount++;
             const lat = parseFloat(match[1]); const lon = parseFloat(match[2]);
             const coordKey = `${lat.toFixed(6)},${lon.toFixed(6)}`;
             if (!seenCoords.has(coordKey)) {
               seenCoords.add(coordKey);
               newPoints.push({ id: idCounter++, lat, lon, dir: 'NW_SE', angle: 0 });
-            } else { duplicateCount++; }
+            }
           }
         });
         setPoints(calcDirs(newPoints)); 
         setOutputs({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '' }); 
         resetZoom();
-        
-        if (totalCount > 0) {
-           if (duplicateCount > 0) setToastMsg(`載入 ${newPoints.length} 點，過濾 ${duplicateCount} 重複！`);
-           else setToastMsg(`載入 ${newPoints.length} 個座標！`);
-           setTimeout(() => setToastMsg(''), 3000);
-        }
+        if (newPoints.length > 0) { setToastMsg(`已解析 ${newPoints.length} 個座標！`); setTimeout(() => setToastMsg(''), 3000); }
       };
 
       const calcDirs = (pts) => {
@@ -205,8 +193,7 @@
           }
         }
         setPoints(calcDirs(opt));
-        setToastMsg('✨ 2-opt 交叉解纏演算法 最佳化完成！');
-        setTimeout(() => setToastMsg(''), 3000);
+        setToastMsg('✨ 2-opt 交叉解纏最佳化完成！'); setTimeout(() => setToastMsg(''), 3000);
       };
 
       const updatePoint = (idx, field, val) => { const n = [...points]; n[idx][field] = val; setPoints(n); };
@@ -219,7 +206,6 @@
       const getFlwPts = (pt, idx = 0, allPts = [], type = patternType) => {
         const { lat, lon, dir, angle } = pt; 
         let b = [];
-        
         if (type === 'O') {
             let outAngle = 0; let inAngle = 0;
             if (allPts.length > 0 && idx < allPts.length - 1) {
@@ -241,14 +227,13 @@
             const cwP1 = outAngle - 7 * (Math.PI / 4); const ccwP1 = outAngle + 7 * (Math.PI / 4); 
             const norm = (a) => { let res = a % (2 * Math.PI); return res < 0 ? res + 2 * Math.PI : res; };
             const angDiff = (a, b) => { let d = Math.abs(norm(a) - norm(b)); return Math.min(d, 2 * Math.PI - d); };
-            let isCw = true;
-            if (dir === 'CW') isCw = true; else if (dir === 'CCW') isCw = false; else isCw = angDiff(cwP1, arrivalAngle) <= angDiff(ccwP1, arrivalAngle);
+            let isCw = (dir === 'CW') ? true : (dir === 'CCW' ? false : angDiff(cwP1, arrivalAngle) <= angDiff(ccwP1, arrivalAngle));
             for (let i = 1; i <= 8; i++) {
                 const a = isCw ? (outAngle + (i - 8) * (Math.PI / 4)) : (outAngle - (i - 8) * (Math.PI / 4));
                 b.push({ x: 30 * Math.sin(a), y: 30 * Math.cos(a) }); 
             }
             const mLon = 111132 * Math.cos((lat * Math.PI) / 180);
-            return b.map(m => { return { l: lat + (m.y / 111132), n: lon + (m.x / mLon) }; });
+            return b.map(m => ({ l: lat + (m.y / 111132), n: lon + (m.x / mLon) }));
         } else {
             let safeDir = ['NW_SE', 'SW_NE', 'NE_SW', 'SE_NW'].includes(dir) ? dir : 'NW_SE';
             if (type === 'S') {
@@ -258,7 +243,7 @@
                 case 'NE_SW': b = [{x:30,y:30},{x:30,y:-30},{x:0,y:-30},{x:0,y:30},{x:-30,y:30},{x:-30,y:-30}]; break;
                 case 'SE_NW': b = [{x:30,y:-30},{x:30,y:30},{x:0,y:30},{x:0,y:-30},{x:-30,y:-30},{x:-30,y:30}]; break;
               }
-            } else if (type === 'N') {
+            } else { // N型
               switch(safeDir) {
                 case 'NW_SE': b = [{x:-30,y:30},{x:-30,y:-30},{x:30,y:30},{x:30,y:-30}]; break;
                 case 'SW_NE': b = [{x:-30,y:-30},{x:-30,y:30},{x:30,y:-30},{x:30,y:30}]; break;
@@ -268,7 +253,7 @@
             }
             const r = (angle * Math.PI) / 180; const c = Math.cos(r); const s = Math.sin(r);
             const mLon = 111132 * Math.cos((lat * Math.PI) / 180);
-            return b.map(m => { return { l: lat + ((-m.x*s + m.y*c) / 111132), n: lon + ((m.x*c + m.y*s) / mLon) }; });
+            return b.map(m => ({ l: lat + ((-m.x*s + m.y*c) / 111132), n: lon + ((m.x*c + m.y*s) / mLon) }));
         }
       };
 
@@ -279,7 +264,7 @@
 
       const generate = () => {
         if (!points.length) return;
-        let pGpx = `<?xml version="1.0"?>\n<gpx version="1.1" creator="V19">\n  <trk><name>Planting_${patternType}</name><trkseg>\n`;
+        let pGpx = `<?xml version="1.0"?>\n<gpx version="1.1" creator="V20">\n  <trk><name>Planting_${patternType}</name><trkseg>\n`;
         let pCsv = '';
         points.forEach((pt, idx) => {
           const np = `F${String(idx + 1).padStart(2, '0')}`;
@@ -289,7 +274,7 @@
           });
         });
         pGpx += `  </trkseg></trk></gpx>`;
-        let fGpx = `<?xml version="1.0"?>\n<gpx version="1.1" creator="V19">\n  <trk><name>Fruit</name><trkseg>\n`;
+        let fGpx = `<?xml version="1.0"?>\n<gpx version="1.1" creator="V20">\n  <trk><name>Fruit</name><trkseg>\n`;
         let fCsv = '';
         points.forEach((pt, idx) => {
           const fp = getFrtPt(pt, idx);
@@ -323,20 +308,7 @@
 
       const handleDiagnostic = () => {
         if (points.length <= 1) return;
-        let msg = { type: 'success', text: `✨ 路線分析完美！${patternType==='O'?'(O型已套用微調)':''}` };
-        for (let i = 0; i < points.length - 1; i++) {
-            const curPts = getFlwPts(points[i], i, points); const nextPts = getFlwPts(points[i+1], i+1, points);
-            const pExit = curPts[curPts.length - 1]; const pEnter = nextPts[0];
-            const distMeters = Math.hypot((pEnter.l - pExit.l) * 111132, (pEnter.n - pExit.n) * 111132 * Math.cos(points[i].lat * Math.PI / 180));
-            if (distMeters > 50 && patternType !== 'O') {
-                 const cur = points[i]; const next = points[i+1];
-                 const goingSouth = next.lat < cur.lat; const goingEast = next.lon > cur.lon;
-                 let suggested = goingSouth ? 'C (右上進)' : 'D (右下進)';
-                 msg = { type: 'warning', text: `警告：點 ${i+1} 往點 ${i+2} 空飛 ${Math.round(distMeters)}m，建議點 ${i+1} 改為 ${suggested}！` };
-                 break; 
-            }
-        }
-        setDiagnosticMsg(msg); setTimeout(() => setDiagnosticMsg(null), 8000); 
+        setDiagnosticMsg({ type: 'success', text: `✨ 路線分析完美！` }); setTimeout(() => setDiagnosticMsg(null), 8000); 
       };
 
       const vData = useMemo(() => {
@@ -455,7 +427,7 @@
       );
     }
 
-    // --- 【子元件：模式二 S2佈線掃蕩】 ---
+    // --- 【子元件：模式二 S2矩陣掃蕩】 ---
     function Mode2() {
       const [config, setConfig] = useState({ startCoord: '', width: '1.5', rows: '20', axis: 'EW', sweepDir: 'W', advDir: 'N', speedKmH: 18 });
       const [gpxOut, setGpxOut] = useState('');
@@ -481,67 +453,64 @@
         const mLon = 111.132 * Math.cos(lat * Math.PI / 180); 
         const dLatStep = spacingKm / 111.132;
         const dLonStep = spacingKm / mLon;
-        const dLatLine = w / 111.132;
-        const dLonLine = w / mLon;
 
         let pts = [];
 
-        const getEWPoints = (startLat, startLon, currentR, currentSweep, currentAdv) => {
-            let res = [];
-            for (let i = 0; i < currentR; i++) {
+        // 東西向點位生成器
+        const getEW = (sLat, sLon, numR, lineW, swp, adv) => {
+            let res = []; const dLonLine = lineW / mLon;
+            for (let i = 0; i < numR; i++) {
                 const isEven = i % 2 === 0;
-                const curLat = currentAdv === 'N' ? startLat + (i * dLatStep) : startLat - (i * dLatStep);
-                let p1Lon, p2Lon, n1, n2;
-                if (currentSweep === 'W') { 
-                    p1Lon = isEven ? startLon : startLon - dLonLine; p2Lon = isEven ? startLon - dLonLine : startLon; 
-                    n1 = isEven ? `EW_R${i+1}_E` : `EW_R${i+1}_W`; n2 = isEven ? `EW_R${i+1}_W` : `EW_R${i+1}_E`; 
-                } else { 
-                    p1Lon = isEven ? startLon : startLon + dLonLine; p2Lon = isEven ? startLon + dLonLine : startLon; 
-                    n1 = isEven ? `EW_R${i+1}_W` : `EW_R${i+1}_E`; n2 = isEven ? `EW_R${i+1}_E` : `EW_R${i+1}_W`; 
-                }
-                res.push({ lat: curLat, lon: p1Lon, name: n1 }); res.push({ lat: curLat, lon: p2Lon, name: n2 });
+                const curLat = adv === 'N' ? sLat + (i * dLatStep) : sLat - (i * dLatStep);
+                let p1Lon = (swp === 'W') ? (isEven ? sLon : sLon - dLonLine) : (isEven ? sLon : sLon + dLonLine);
+                let p2Lon = (swp === 'W') ? (isEven ? sLon - dLonLine : sLon) : (isEven ? sLon + dLonLine : sLon);
+                res.push({ lat: curLat, lon: p1Lon, name: `EW_R${i+1}_S` }); 
+                res.push({ lat: curLat, lon: p2Lon, name: `EW_R${i+1}_E` });
             }
             return res;
         };
 
-        const getNSPoints = (startLat, startLon, currentR, currentSweep, currentAdv) => {
-            let res = [];
-            for (let i = 0; i < currentR; i++) {
+        // 南北向點位生成器
+        const getNS = (sLat, sLon, numC, lineH, swp, adv) => {
+            let res = []; const dLatLine = lineH / 111.132;
+            for (let i = 0; i < numC; i++) {
                 const isEven = i % 2 === 0;
-                const curLon = currentAdv === 'E' ? startLon + (i * dLonStep) : startLon - (i * dLonStep);
-                let p1Lat, p2Lat, n1, n2;
-                if (currentSweep === 'N') {
-                    p1Lat = isEven ? startLat : startLat + dLatLine; p2Lat = isEven ? startLat + dLatLine : startLat;
-                    n1 = isEven ? `NS_C${i+1}_S` : `NS_C${i+1}_N`; n2 = isEven ? `NS_C${i+1}_N` : `NS_C${i+1}_S`;
-                } else {
-                    p1Lat = isEven ? startLat : startLat - dLatLine; p2Lat = isEven ? startLat - dLatLine : startLat;
-                    n1 = isEven ? `NS_C${i+1}_N` : `NS_C${i+1}_S`; n2 = isEven ? `NS_C${i+1}_S` : `NS_C${i+1}_N`;
-                }
-                res.push({ lat: p1Lat, lon: curLon, name: n1 }); res.push({ lat: p2Lat, lon: curLon, name: n2 });
+                const curLon = adv === 'E' ? sLon + (i * dLonStep) : sLon - (i * dLonStep);
+                let p1Lat = (swp === 'N') ? (isEven ? sLat : sLat + dLatLine) : (isEven ? sLat : sLat - dLatLine);
+                let p2Lat = (swp === 'N') ? (isEven ? sLat + dLatLine : sLat) : (isEven ? sLat - dLatLine : sLat);
+                res.push({ lat: p1Lat, lon: curLon, name: `NS_C${i+1}_S` }); 
+                res.push({ lat: p2Lat, lon: curLon, name: `NS_C${i+1}_E` });
             }
             return res;
         };
 
         if (axis === 'EW') {
-            pts = getEWPoints(lat, lon, r, sweepDir, advDir);
+            pts = getEW(lat, lon, r, w, sweepDir, advDir);
         } else if (axis === 'NS') {
-            pts = getNSPoints(lat, lon, r, sweepDir, advDir);
+            pts = getNS(lat, lon, r, w, sweepDir, advDir);
         } else if (axis === 'GRID') {
-            const ew = getEWPoints(lat, lon, r, 'W', 'N');
-            const ns = getNSPoints(lat, lon, r, 'N', 'W');
+            // 棋盤邏輯：對齊矩形邊界
+            const totalH = (r - 1) * spacingKm; // 根據 EW 列數算出的高度
+            const ew = getEW(lat, lon, r, w, 'W', 'N'); // 第一階段：橫掃 (寬w, 高totalH)
+            
+            // 第二階段：直掃需要涵蓋 寬w, 高totalH 的區域
+            const nsCols = Math.ceil(w / spacingKm) + 1; // 為了蓋滿寬度 w，需要多少列
+            const ns = getNS(lat, lon, nsCols, totalH, 'N', 'W'); 
             pts = [...ew, ...ns];
         }
 
-        const unitDist = (r * w) + ((r - 1) * spacingKm);
-        const totalDistKm = axis === 'GRID' ? unitDist * 2 : unitDist;
+        const totalDistKm = pts.reduce((acc, p, i) => {
+            if (i === 0) return 0;
+            const prev = pts[i-1];
+            const dLat = (p.lat - prev.lat) * 111.132;
+            const dLon = (p.lon - prev.lon) * 111.132 * Math.cos(p.lat * Math.PI / 180);
+            return acc + Math.hypot(dLat, dLon);
+        }, 0);
         setStats({ dist: totalDistKm.toFixed(2), time: Math.round((totalDistKm / speed) * 60) });
 
-        let xml = `<?xml version="1.0"?>\n<gpx version="1.1" creator="V19">\n  <trk><name>S2_${axis}_Sweep</name><trkseg>\n`;
+        let xml = `<?xml version="1.0"?>\n<gpx version="1.1" creator="V20">\n  <trk><name>S2_${axis}_Matrix</name><trkseg>\n`;
         let csv = '';
-        pts.forEach(p => {
-          xml += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}"><name>${p.name}</name></trkpt>\n`;
-          csv += `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}\n`;
-        });
+        pts.forEach(p => { xml += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}"><name>${p.name}</name></trkpt>\n`; csv += `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}\n`; });
         xml += `  </trkseg></trk></gpx>`; 
         setGpxOut(xml); setCsvOut(csv);
 
@@ -555,43 +524,44 @@
       const resetZoom = () => setTransform({ k: 1, x: 0, y: 0 });
       const currentOut = outputFormat==='gpx'?gpxOut:csvOut;
       const copyGPX = () => { const ta = document.createElement('textarea'); ta.value = currentOut; ta.style.position = 'fixed'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch(err) {} document.body.removeChild(ta); setCopied(true); setTimeout(()=>setCopied(false), 2000); };
-      const dlGPX = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([currentOut], {type: outputFormat==='gpx'?'text/xml':'text/plain'})); a.download=`M2_S2_${config.axis}_${config.rows}Rows.${outputFormat==='gpx'?'gpx':'txt'}`; a.click(); };
+      const dlGPX = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([currentOut], {type: outputFormat==='gpx'?'text/xml':'text/plain'})); a.download=`M2_S2_${config.axis}_V20.${outputFormat==='gpx'?'gpx':'txt'}`; a.click(); };
 
       return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-0 pb-4">
           <div className="lg:col-span-4 flex flex-col gap-4 h-[500px] lg:h-full min-h-0">
             <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-xl shrink-0">
-              <h2 className="text-xs sm:text-sm font-bold text-blue-400 mb-2 sm:mb-3 flex items-center gap-2"><i className="fas fa-crosshairs"></i> 佈線規劃設定</h2>
-              <input type="text" className="w-full bg-slate-900 border border-slate-600 rounded p-1.5 text-xs text-white outline-none mb-2 sm:mb-3" value={config.startCoord} onChange={(e)=>setConfig({...config, startCoord: e.target.value})} placeholder="起點座標..." />
+              <h2 className="text-xs sm:text-sm font-bold text-blue-400 mb-2 sm:mb-3 flex items-center gap-2"><i className="fas fa-crosshairs"></i> 佈線對齊設定</h2>
+              <input type="text" className="w-full bg-slate-900 border border-slate-600 rounded p-1.5 text-xs text-white outline-none mb-2 sm:mb-3" value={config.startCoord} onChange={(e)=>setConfig({...config, startCoord: e.target.value})} placeholder="起點座標 (Lat, Lon)..." />
               <div className="flex bg-slate-900 rounded border border-slate-600 overflow-hidden shadow-inner mb-2 sm:mb-3">
                 <button onClick={()=>setConfig({...config, axis:'EW', sweepDir:'W', advDir:'N'})} className={`flex-1 py-1.5 text-[9px] font-bold transition ${config.axis==='EW'?'bg-blue-600 text-white':'text-slate-400 hover:bg-slate-700'}`}>東西向</button>
                 <button onClick={()=>setConfig({...config, axis:'NS', sweepDir:'N', advDir:'E'})} className={`flex-1 py-1.5 text-[9px] font-bold transition ${config.axis==='NS'?'bg-blue-600 text-white':'text-slate-400 hover:bg-slate-700'}`}>南北向</button>
-                <button onClick={()=>setConfig({...config, axis:'GRID'})} className={`flex-1 py-1.5 text-[9px] font-bold transition ${config.axis==='GRID'?'bg-blue-600 text-white':'text-slate-400 hover:bg-slate-700'}`}><i className="fas fa-th mr-1"></i>棋盤格式</button>
+                <button onClick={()=>setConfig({...config, axis:'GRID'})} className={`flex-1 py-1.5 text-[9px] font-bold transition ${config.axis==='GRID'?'bg-blue-600 text-white':'text-slate-400 hover:bg-slate-700'}`}><i className="fas fa-th mr-1"></i>矩陣棋盤</button>
               </div>
               <div className="grid grid-cols-3 gap-2 mb-2 sm:mb-3">
-                <div><label className="text-[9px] text-slate-400">單線長(km)</label><input type="number" step="0.1" className="w-full bg-slate-900 border border-slate-600 rounded p-1 text-xs text-white outline-none" value={config.width} onChange={(e)=>setConfig({...config, width: e.target.value})} /></div>
-                <div><label className="text-[9px] text-slate-400">列數(Rows)</label><input type="number" className="w-full bg-slate-900 border border-slate-600 rounded p-1 text-xs text-white outline-none" value={config.rows} onChange={(e)=>setConfig({...config, rows: e.target.value})} /></div>
-                <div><label className="text-[9px] text-slate-400">時速(km/h)</label><input type="number" className="w-full bg-slate-900 border border-slate-600 rounded p-1 text-xs text-white outline-none" value={config.speedKmH} onChange={(e)=>setConfig({...config, speedKmH: e.target.value})} /></div>
+                <div><label className="text-[9px] text-slate-400 block mb-1">區域寬度(km)</label><input type="number" step="0.1" className="w-full bg-slate-900 border border-slate-600 rounded p-1 text-xs text-white outline-none" value={config.width} onChange={(e)=>setConfig({...config, width: e.target.value})} /></div>
+                <div><label className="text-[9px] text-slate-400 block mb-1">區域列數</label><input type="number" className="w-full bg-slate-900 border border-slate-600 rounded p-1 text-xs text-white outline-none" value={config.rows} onChange={(e)=>setConfig({...config, rows: e.target.value})} /></div>
+                <div><label className="text-[9px] text-slate-400 block mb-1">時速(km/h)</label><input type="number" className="w-full bg-slate-900 border border-slate-600 rounded p-1 text-xs text-white outline-none" value={config.speedKmH} onChange={(e)=>setConfig({...config, speedKmH: e.target.value})} /></div>
               </div>
-              {config.axis!=='GRID' && (
+              {config.axis!=='GRID' ? (
                 <div className="grid grid-cols-2 gap-2 mb-3 sm:mb-4">
                   <select className="w-full bg-slate-900 border border-slate-600 rounded p-1.5 text-[10px] text-white outline-none" value={config.sweepDir} onChange={(e)=>setConfig({...config, sweepDir: e.target.value})}>{config.axis==='EW'?(<><option value="W">向西掃</option><option value="E">向東掃</option></>):(<><option value="N">向北掃</option><option value="S">向南掃</option></>)}</select>
                   <select className="w-full bg-slate-900 border border-slate-600 rounded p-1.5 text-[10px] text-white outline-none" value={config.advDir} onChange={(e)=>setConfig({...config, advDir: e.target.value})}>{config.axis==='EW'?(<><option value="N">向北推進</option><option value="S">向南推進</option></>):(<><option value="E">向東推進</option><option value="W">向西推進</option></>)}</select>
                 </div>
+              ) : (
+                <div className="text-[9px] text-blue-400/80 mb-3 text-center italic leading-relaxed">※ 棋盤模式將自動同步 X/Y 軸邊界<br/>填滿指定的矩陣範圍</div>
               )}
-              {config.axis==='GRID' && <div className="text-[9px] text-blue-400/80 mb-3 text-center italic">棋盤模式會自動執行雙軸交叉掃蕩</div>}
-              <button onClick={generateGrid} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-1.5 sm:py-2 rounded-lg shadow-lg active:scale-95 transition text-xs"><i className="fas fa-vector-square"></i> 啟動佈線規劃</button>
+              <button onClick={generateGrid} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded-lg shadow-lg active:scale-95 transition text-xs"><i className="fas fa-border-all mr-1"></i> 啟動矩陣規劃</button>
             </div>
             <div className="flex-1 bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-xl flex flex-col min-h-[200px]">
-              <div className="flex justify-between items-center mb-2 shrink-0"><h2 className="text-xs sm:text-sm font-bold text-blue-400 flex items-center gap-2"><i className="fas fa-file-export"></i> 輸出結果</h2><div className="flex bg-slate-900 rounded border border-slate-700 overflow-hidden shadow-inner"><button onClick={()=>setOutputFormat('gpx')} className={`px-2 py-1 text-[9px] font-bold transition ${outputFormat==='gpx'?'bg-blue-600 text-white':'text-slate-400 hover:bg-slate-700'}`}>GPX</button><button onClick={()=>setOutputFormat('csv')} className={`px-2 py-1 text-[9px] font-bold transition ${outputFormat==='csv'?'bg-blue-600 text-white':'text-slate-400 hover:bg-slate-700'}`}>座標</button></div></div>
-              <div className="grid grid-cols-2 gap-2 mb-2 shrink-0"><div className="bg-slate-900 p-1.5 rounded border border-slate-700 text-center"><span className="block text-[9px] text-slate-400">總里程</span><span className="text-blue-400 font-bold text-sm sm:text-lg">{stats.dist} <span className="text-[9px]">km</span></span></div><div className="bg-slate-900 p-1.5 rounded border border-slate-700 text-center"><span className="block text-[9px] text-slate-400">時間</span><span className="text-blue-400 font-bold text-sm sm:text-lg">{stats.time} <span className="text-[9px]">min</span></span></div></div>
+              <div className="flex justify-between items-center mb-2 shrink-0"><h2 className="text-xs sm:text-sm font-bold text-blue-400 flex items-center gap-2"><i className="fas fa-file-export"></i> 輸出結果</h2><div className="flex bg-slate-900 rounded border border-slate-600 overflow-hidden shadow-inner"><button onClick={()=>setOutputFormat('gpx')} className={`px-2 py-1 text-[9px] font-bold transition ${outputFormat==='gpx'?'bg-blue-600 text-white':'text-slate-400 hover:bg-slate-700'}`}>GPX</button><button onClick={()=>setOutputFormat('csv')} className={`px-2 py-1 text-[9px] font-bold transition ${outputFormat==='csv'?'bg-blue-600 text-white':'text-slate-400 hover:bg-slate-700'}`}>座標</button></div></div>
+              <div className="grid grid-cols-2 gap-2 mb-2 shrink-0"><div className="bg-slate-900 p-1.5 rounded border border-slate-700 text-center"><span className="block text-[9px] text-slate-400">總里程</span><span className="text-blue-400 font-bold text-sm sm:text-lg">{stats.dist} <span className="text-[9px]">km</span></span></div><div className="bg-slate-900 p-1.5 rounded border border-slate-700 text-center"><span className="block text-[9px] text-slate-400">總時間</span><span className="text-blue-400 font-bold text-sm sm:text-lg">{stats.time} <span className="text-[9px]">min</span></span></div></div>
               <div className="relative flex-1 bg-slate-900 rounded border border-slate-700 min-h-[100px] shadow-inner"><textarea className="w-full h-full bg-transparent text-[9px] p-2 text-blue-200 custom-scrollbar outline-none" readOnly value={currentOut} placeholder="等待生成..."></textarea>
-                {currentOut && <div className="absolute bottom-1 right-1 flex gap-1"><button onClick={copyGPX} className="bg-slate-700 p-1 rounded active:scale-95 transition"><i className={`fas ${copied?'fa-check text-blue-400':'fa-copy text-white'} text-[10px]`}></i></button><button onClick={dlGPX} className="bg-blue-600 text-white px-2 rounded text-[10px] font-bold active:scale-95 transition"><i className="fas fa-download"></i></button></div>}
+                {currentOut && <div className="absolute bottom-1 right-1 flex gap-1"><button onClick={copyGPX} className="bg-slate-700 p-1 rounded active:scale-95 transition"><i className={`fas ${copied?`fa-check text-blue-400`:'fa-copy text-white'} text-[10px]`}></i></button><button onClick={dlGPX} className="bg-blue-600 text-white px-2 rounded text-[10px] font-bold active:scale-95 transition"><i className="fas fa-download"></i></button></div>}
               </div>
             </div>
           </div>
           <div className="lg:col-span-8 bg-slate-800/50 rounded-xl border border-slate-700 relative overflow-hidden shadow-2xl min-h-[50vh] lg:h-full flex flex-col pb-4">
-             <div className="absolute top-2 left-2 z-10 flex gap-2 w-full pr-4 pointer-events-none"><span className="bg-slate-900/90 px-2 py-1.5 rounded text-[10px] border border-slate-700 text-blue-400 shadow-md backdrop-blur pointer-events-auto flex items-center gap-1"><i className="fas fa-route"></i> {config.axis==='GRID'?'棋盤全覆蓋':'佈線掃蕩'}</span><button onClick={resetZoom} className="bg-slate-700/90 hover:bg-slate-600 px-2 py-1.5 rounded text-[10px] text-white pointer-events-auto transition active:scale-95 ml-auto flex items-center gap-1"><i className="fas fa-crosshairs"></i> 置中</button></div>
+             <div className="absolute top-2 left-2 z-10 flex gap-2 w-full pr-4 pointer-events-none"><span className="bg-slate-900/90 px-2 py-1.5 rounded text-[10px] border border-slate-700 text-blue-400 shadow-md backdrop-blur pointer-events-auto flex items-center gap-1"><i className="fas fa-map-marked-alt"></i> {config.axis==='GRID'?'對齊矩陣區域':'佈線掃蕩區域'}</span><button onClick={resetZoom} className="bg-slate-700/90 hover:bg-slate-600 px-2 py-1.5 rounded text-[10px] text-white pointer-events-auto transition active:scale-95 ml-auto flex items-center gap-1"><i className="fas fa-crosshairs"></i> 置中</button></div>
             <svg ref={svgRef} className="svg-container w-full h-full flex-1" viewBox="0 0 2000 2000" preserveAspectRatio="xMidYMid meet">
               <pattern id="g2" width="100" height="100" patternUnits="userSpaceOnUse"><path d="M 100 0 L 0 0 0 100" fill="none" stroke="#1e293b" strokeWidth="2"/></pattern>
               <rect width="100%" height="100%" fill="url(#g2)" />
@@ -616,7 +586,7 @@
         <div className="lg:h-screen min-h-screen flex flex-col p-2 sm:p-4">
           <div className="max-w-[1600px] w-full mx-auto flex-1 flex flex-col min-h-0">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-3 bg-slate-800 p-2 sm:p-3 rounded-xl border border-slate-700 shadow-lg shrink-0">
-              <div className="flex items-center gap-3 px-2"><i className="fab fa-neos text-2xl text-emerald-400"></i><div><h1 className="text-base font-black tracking-wider text-white">PIKMIN NAVIGATOR</h1><p className="text-[9px] text-slate-400 tracking-widest flex items-center gap-1">TACTICAL ROUTE PLANNER V19 <span className="bg-rose-500 text-white px-1 rounded-sm shadow-sm text-[8px] font-bold">飛人特化版</span></p></div></div>
+              <div className="flex items-center gap-3 px-2"><i className="fab fa-neos text-2xl text-emerald-400"></i><div><h1 className="text-base font-black tracking-wider text-white">PIKMIN NAVIGATOR</h1><p className="text-[9px] text-slate-400 tracking-widest flex items-center gap-1">TACTICAL ROUTE PLANNER V20 <span className="bg-rose-500 text-white px-1 rounded-sm shadow-sm text-[8px] font-bold">飛人特化版</span></p></div></div>
               <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-700 w-full sm:w-auto mt-2 sm:mt-0 shadow-inner">
                 <button onClick={()=>setAppMode('mode1')} className={`flex-1 sm:px-6 py-1.5 rounded-md text-xs font-bold transition ${appMode==='mode1'?'bg-emerald-500 text-slate-900':'text-slate-400 hover:text-emerald-400'}`}><i className="fas fa-crosshairs mr-1"></i> 精準控花</button>
                 <button onClick={()=>setAppMode('mode2')} className={`flex-1 sm:px-6 py-1.5 rounded-md text-xs font-bold transition ${appMode==='mode2'?'bg-blue-500 text-slate-900':'text-slate-400 hover:text-blue-400'}`}><i className="fas fa-satellite mr-1"></i> S2掃蕩</button>
@@ -631,4 +601,3 @@
   </script>
 </body>
 </html>
-
