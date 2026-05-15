@@ -26,7 +26,43 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useMemo, useRef, useEffect } = React;
+    const { useState, useMemo, useRef, useEffect, useCallback } = React;
+
+    // --- 【系統常數字典 (Constants)】 ---
+    const CONSTANTS = {
+      LAT_TO_M: 111132,             // 緯度1度對應的公尺數 (約值)
+      FLW_SAFE_RADIUS_M: 30,        // 大花防冷卻極限安全半徑 (公尺)
+      FLW_MAX_RADIUS_M: 40,         // 大花最大物理判定半徑 (公尺)
+      S2_SPACING_KM: 0.0778,        // 模式二 S2 網格標準列距 (公里)
+      MIN_LAT: -90, MAX_LAT: 90,    // 緯度合理範圍
+      MIN_LON: -180, MAX_LON: 180   // 經度合理範圍
+    };
+
+    // --- 【共用 Helper：防呆座標驗證】 ---
+    const isValidCoord = (lat, lon) => {
+      return !isNaN(lat) && !isNaN(lon) &&
+             lat >= CONSTANTS.MIN_LAT && lat <= CONSTANTS.MAX_LAT &&
+             lon >= CONSTANTS.MIN_LON && lon <= CONSTANTS.MAX_LON;
+    };
+
+    // --- 【共用 Helper：經緯度距離與轉換 (DRY 原則)】 ---
+    const getLonToMeters = (lat) => {
+      return CONSTANTS.LAT_TO_M * Math.cos((lat * Math.PI) / 180);
+    };
+
+    // 回傳距離 (公里 km)
+    const calcDistanceKm = (p1, p2) => {
+      const dLat = (p1.lat - p2.lat) * (CONSTANTS.LAT_TO_M / 1000);
+      const dLon = (p1.lon - p2.lon) * (getLonToMeters(p1.lat) / 1000);
+      return Math.hypot(dLat, dLon);
+    };
+
+    // 回傳距離 (公尺 m)
+    const calcDistanceM = (p1, p2) => {
+      const dLat = (p1.lat - p2.lat) * CONSTANTS.LAT_TO_M;
+      const dLon = (p1.lon - p2.lon) * getLonToMeters(p1.lat);
+      return Math.hypot(dLat, dLon);
+    };
 
     // --- 【共用 Helper：時間戳記產生器】 ---
     const getTimestamp = () => {
@@ -125,39 +161,54 @@
       const [toastMsg, setToastMsg] = useState('');
       const [diagnosticMsg, setDiagnosticMsg] = useState(null);
       const [patternType, setPatternType] = useState('O');
+      const [loading, setLoading] = useState(false);
 
       const svgRef = useRef(null);
       const [transform, setTransform] = useState({ k: 1, x: 0, y: 0 });
       const transformRef = useRef(transform); transformRef.current = transform;
 
-      const handleParse = () => {
-        const lines = rawInput.split('\n');
-        const newPoints = []; let idCounter = 1;
-        const seenCoords = new Set();
-        let duplicateCount = 0; let totalCount = 0;
-        
-        lines.forEach(line => {
-          const match = line.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
-          if (match) {
-            totalCount++;
-            const lat = parseFloat(match[1]); const lon = parseFloat(match[2]);
-            const coordKey = `${lat.toFixed(6)},${lon.toFixed(6)}`;
-            if (!seenCoords.has(coordKey)) {
-              seenCoords.add(coordKey);
-              newPoints.push({ id: idCounter++, lat, lon, dir: 'NW_SE', angle: 0 });
-            } else { duplicateCount++; }
+      const handleParse = useCallback(() => {
+        setLoading(true);
+        setTimeout(() => {
+          try {
+              const lines = rawInput.split('\n');
+              const newPoints = []; let idCounter = 1;
+              const seenCoords = new Set();
+              let duplicateCount = 0; let totalCount = 0; let invalidCount = 0;
+              
+              lines.forEach(line => {
+                const match = line.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
+                if (match) {
+                  totalCount++;
+                  const lat = parseFloat(match[1]); const lon = parseFloat(match[2]);
+                  if (isValidCoord(lat, lon)) {
+                      const coordKey = `${lat.toFixed(6)},${lon.toFixed(6)}`;
+                      if (!seenCoords.has(coordKey)) {
+                        seenCoords.add(coordKey);
+                        newPoints.push({ id: idCounter++, lat, lon, dir: 'NW_SE', angle: 0 });
+                      } else { duplicateCount++; }
+                  } else { invalidCount++; }
+                }
+              });
+              setPoints(calcDirs(newPoints)); 
+              setOutputs({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '' }); 
+              resetZoom();
+              
+              if (totalCount > 0) {
+                 let msg = `載入 ${newPoints.length} 個座標！`;
+                 if (duplicateCount > 0) msg += ` (過濾 ${duplicateCount} 重複)`;
+                 if (invalidCount > 0) msg += ` (忽略 ${invalidCount} 錯誤座標)`;
+                 setToastMsg(msg);
+                 setTimeout(() => setToastMsg(''), 3500);
+              }
+          } catch (e) {
+              setToastMsg(`解析錯誤：請檢查座標格式！`);
+              setTimeout(() => setToastMsg(''), 3000);
+          } finally {
+              setLoading(false);
           }
-        });
-        setPoints(calcDirs(newPoints)); 
-        setOutputs({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '' }); 
-        resetZoom();
-        
-        if (totalCount > 0) {
-           if (duplicateCount > 0) setToastMsg(`載入 ${newPoints.length} 點，過濾 ${duplicateCount} 重複！`);
-           else setToastMsg(`載入 ${newPoints.length} 個座標！`);
-           setTimeout(() => setToastMsg(''), 3000);
-        }
-      };
+        }, 10);
+      }, [rawInput]);
 
       const calcDirs = (pts) => {
         if (!pts.length) return pts;
@@ -174,46 +225,49 @@
         });
       };
 
-      const handleOptimize = () => {
+      const handleOptimize = useCallback(() => {
         if (points.length <= 1) return;
-        
-        const getDist = (p1, p2) => {
-            const dLat = p1.lat - p2.lat;
-            const dLon = (p1.lon - p2.lon) * Math.cos(p1.lat * Math.PI / 180);
-            return Math.hypot(dLat, dLon);
-        };
+        setLoading(true);
+        setTimeout(() => {
+          try {
+            let unv = [...points]; let cur = unv.shift(); let opt = [cur];
+            
+            while (unv.length > 0) {
+              let nIdx = 0; let minD = Infinity;
+              for (let i = 0; i < unv.length; i++) {
+                const dist = calcDistanceKm(cur, unv[i]);
+                if (dist < minD) { minD = dist; nIdx = i; }
+              }
+              cur = unv[nIdx]; opt.push(cur); unv.splice(nIdx, 1);
+            }
 
-        let unv = [...points]; let cur = unv.shift(); let opt = [cur];
-        
-        while (unv.length > 0) {
-          let nIdx = 0; let minD = Infinity;
-          for (let i = 0; i < unv.length; i++) {
-            const dist = getDist(cur, unv[i]);
-            if (dist < minD) { minD = dist; nIdx = i; }
-          }
-          cur = unv[nIdx]; opt.push(cur); unv.splice(nIdx, 1);
-        }
-
-        let improved = true;
-        while (improved) {
-          improved = false;
-          for (let i = 1; i < opt.length - 2; i++) {
-            for (let j = i + 1; j < opt.length - 1; j++) {
-              const d1 = getDist(opt[i-1], opt[i]) + getDist(opt[j], opt[j+1]);
-              const d2 = getDist(opt[i-1], opt[j]) + getDist(opt[i], opt[j+1]);
-              if (d2 < d1) {
-                const rev = opt.slice(i, j + 1).reverse();
-                opt.splice(i, j - i + 1, ...rev);
-                improved = true;
+            let improved = true;
+            while (improved) {
+              improved = false;
+              for (let i = 1; i < opt.length - 2; i++) {
+                for (let j = i + 1; j < opt.length - 1; j++) {
+                  const d1 = calcDistanceKm(opt[i-1], opt[i]) + calcDistanceKm(opt[j], opt[j+1]);
+                  const d2 = calcDistanceKm(opt[i-1], opt[j]) + calcDistanceKm(opt[i], opt[j+1]);
+                  if (d2 < d1) {
+                    const rev = opt.slice(i, j + 1).reverse();
+                    opt.splice(i, j - i + 1, ...rev);
+                    improved = true;
+                  }
+                }
               }
             }
+            
+            setPoints(calcDirs(opt));
+            setToastMsg('✨ 2-opt 交叉解纏演算法 最佳化完成！');
+            setTimeout(() => setToastMsg(''), 3000);
+          } catch (e) {
+            setToastMsg(`最佳化錯誤：${e.message}`);
+            setTimeout(() => setToastMsg(''), 3000);
+          } finally {
+            setLoading(false);
           }
-        }
-        
-        setPoints(calcDirs(opt));
-        setToastMsg('✨ 2-opt 交叉解纏演算法 最佳化完成！');
-        setTimeout(() => setToastMsg(''), 3000);
-      };
+        }, 10);
+      }, [points]);
 
       const updatePoint = (idx, field, val) => { const n = [...points]; n[idx][field] = val; setPoints(n); };
       const movePoint = (idx, dir) => {
@@ -263,116 +317,138 @@
 
             for (let i = 1; i <= 8; i++) {
                 const a = isCw ? (outAngle + (i - 8) * (Math.PI / 4)) : (outAngle - (i - 8) * (Math.PI / 4));
-                b.push({ x: 30 * Math.sin(a), y: 30 * Math.cos(a) }); 
+                b.push({ x: CONSTANTS.FLW_SAFE_RADIUS_M * Math.sin(a), y: CONSTANTS.FLW_SAFE_RADIUS_M * Math.cos(a) }); 
             }
             
-            const mLon = 111132 * Math.cos((lat * Math.PI) / 180);
-            return b.map(m => { return { l: lat + (m.y / 111132), n: lon + (m.x / mLon) }; });
+            const mLon = getLonToMeters(lat);
+            return b.map(m => { return { l: lat + (m.y / CONSTANTS.LAT_TO_M), n: lon + (m.x / mLon) }; });
         } else {
             let safeDir = ['NW_SE', 'SW_NE', 'NE_SW', 'SE_NW'].includes(dir) ? dir : 'NW_SE';
+            const rOffset = CONSTANTS.FLW_SAFE_RADIUS_M;
             if (type === 'S') {
               switch(safeDir) {
-                case 'NW_SE': b = [{x:-30,y:30},{x:-30,y:-30},{x:0,y:-30},{x:0,y:30},{x:30,y:30},{x:30,y:-30}]; break;
-                case 'SW_NE': b = [{x:-30,y:-30},{x:-30,y:30},{x:0,y:30},{x:0,y:-30},{x:30,y:-30},{x:30,y:30}]; break;
-                case 'NE_SW': b = [{x:30,y:30},{x:30,y:-30},{x:0,y:-30},{x:0,y:30},{x:-30,y:30},{x:-30,y:-30}]; break;
-                case 'SE_NW': b = [{x:30,y:-30},{x:30,y:30},{x:0,y:30},{x:0,y:-30},{x:-30,y:-30},{x:-30,y:30}]; break;
+                case 'NW_SE': b = [{x:-rOffset,y:rOffset},{x:-rOffset,y:-rOffset},{x:0,y:-rOffset},{x:0,y:rOffset},{x:rOffset,y:rOffset},{x:rOffset,y:-rOffset}]; break;
+                case 'SW_NE': b = [{x:-rOffset,y:-rOffset},{x:-rOffset,y:rOffset},{x:0,y:rOffset},{x:0,y:-rOffset},{x:rOffset,y:-rOffset},{x:rOffset,y:rOffset}]; break;
+                case 'NE_SW': b = [{x:rOffset,y:rOffset},{x:rOffset,y:-rOffset},{x:0,y:-rOffset},{x:0,y:rOffset},{x:-rOffset,y:rOffset},{x:-rOffset,y:-rOffset}]; break;
+                case 'SE_NW': b = [{x:rOffset,y:-rOffset},{x:rOffset,y:rOffset},{x:0,y:rOffset},{x:0,y:-rOffset},{x:-rOffset,y:-rOffset},{x:-rOffset,y:rOffset}]; break;
               }
             } else if (type === 'N') {
               switch(safeDir) {
-                case 'NW_SE': b = [{x:-30,y:30},{x:-30,y:-30},{x:30,y:30},{x:30,y:-30}]; break;
-                case 'SW_NE': b = [{x:-30,y:-30},{x:-30,y:30},{x:30,y:-30},{x:30,y:30}]; break;
-                case 'NE_SW': b = [{x:30,y:30},{x:30,y:-30},{x:-30,y:30},{x:-30,y:-30}]; break;
-                case 'SE_NW': b = [{x:30,y:-30},{x:30,y:30},{x:-30,y:-30},{x:-30,y:30}]; break;
+                case 'NW_SE': b = [{x:-rOffset,y:rOffset},{x:-rOffset,y:-rOffset},{x:rOffset,y:rOffset},{x:rOffset,y:-rOffset}]; break;
+                case 'SW_NE': b = [{x:-rOffset,y:-rOffset},{x:-rOffset,y:rOffset},{x:rOffset,y:-rOffset},{x:rOffset,y:rOffset}]; break;
+                case 'NE_SW': b = [{x:rOffset,y:rOffset},{x:rOffset,y:-rOffset},{x:-rOffset,y:rOffset},{x:-rOffset,y:-rOffset}]; break;
+                case 'SE_NW': b = [{x:rOffset,y:-rOffset},{x:rOffset,y:rOffset},{x:-rOffset,y:-rOffset},{x:-rOffset,y:rOffset}]; break;
               }
             }
             const r = (angle * Math.PI) / 180; const c = Math.cos(r); const s = Math.sin(r);
-            const mLon = 111132 * Math.cos((lat * Math.PI) / 180);
-            return b.map(m => { return { l: lat + ((-m.x*s + m.y*c) / 111132), n: lon + ((m.x*c + m.y*s) / mLon) }; });
+            const mLon = getLonToMeters(lat);
+            return b.map(m => { return { l: lat + ((-m.x*s + m.y*c) / CONSTANTS.LAT_TO_M), n: lon + ((m.x*c + m.y*s) / mLon) }; });
         }
       };
 
       const getFrtPt = (pt, i) => {
         const dist = 18 + ((pt.id * 7) % 8); const rad = (pt.id * 137.5) * (Math.PI / 180);
-        return { l: pt.lat + (dist*Math.sin(rad))/111132, n: pt.lon + (dist*Math.cos(rad))/(111132*Math.cos(pt.lat*Math.PI/180)) };
+        return { l: pt.lat + (dist*Math.sin(rad))/CONSTANTS.LAT_TO_M, n: pt.lon + (dist*Math.cos(rad))/(getLonToMeters(pt.lat)) };
       };
 
-      const generate = () => {
+      const generate = useCallback(() => {
         if (!points.length) return;
-        
-        let pGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V28">\n  <trk><name>Planting_${patternType}</name><trkseg>\n`;
-        let pCsv = '';
-        points.forEach((pt, idx) => {
-          const np = `F${String(idx + 1).padStart(2, '0')}`;
-          getFlwPts(pt, idx, points).forEach((p, i) => {
-              pGpx += `    <trkpt lat="${p.l.toFixed(6)}" lon="${p.n.toFixed(6)}"><name>${np}_P${i+1}</name></trkpt>\n`;
-              pCsv += `${p.l.toFixed(6)}, ${p.n.toFixed(6)}\n`;
-          });
-        });
-        pGpx += `  </trkseg></trk></gpx>`;
+        setLoading(true);
+        setTimeout(() => {
+          try {
+            let pGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V31">\n  <trk><name>Planting_${patternType}</name><trkseg>\n`;
+            let pCsv = '';
+            points.forEach((pt, idx) => {
+              const np = `F${String(idx + 1).padStart(2, '0')}`;
+              getFlwPts(pt, idx, points).forEach((p, i) => {
+                  pGpx += `    <trkpt lat="${p.l.toFixed(6)}" lon="${p.n.toFixed(6)}"><name>${np}_P${i+1}</name></trkpt>\n`;
+                  pCsv += `${p.l.toFixed(6)}, ${p.n.toFixed(6)}\n`;
+              });
+            });
+            pGpx += `  </trkseg></trk></gpx>`;
 
-        let fGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V28">\n  <trk><name>Fruit</name><trkseg>\n`;
-        let fCsv = '';
-        points.forEach((pt, idx) => {
-          const fp = getFrtPt(pt, idx);
-          fGpx += `    <trkpt lat="${fp.l.toFixed(6)}" lon="${fp.n.toFixed(6)}"><name>Fruit_F${idx+1}</name></trkpt>\n`;
-          fCsv += `${fp.l.toFixed(6)}, ${fp.n.toFixed(6)}\n`;
-        });
-        fGpx += `  </trkseg></trk></gpx>`;
+            let fGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V31">\n  <trk><name>Fruit</name><trkseg>\n`;
+            let fCsv = '';
+            points.forEach((pt, idx) => {
+              const fp = getFrtPt(pt, idx);
+              fGpx += `    <trkpt lat="${fp.l.toFixed(6)}" lon="${fp.n.toFixed(6)}"><name>Fruit_F${idx+1}</name></trkpt>\n`;
+              fCsv += `${fp.l.toFixed(6)}, ${fp.n.toFixed(6)}\n`;
+            });
+            fGpx += `  </trkseg></trk></gpx>`;
 
-        setOutputs({ plantingGpx: pGpx, plantingCsv: pCsv, fruitGpx: fGpx, fruitCsv: fCsv });
-      };
+            setOutputs({ plantingGpx: pGpx, plantingCsv: pCsv, fruitGpx: fGpx, fruitCsv: fCsv });
+          } catch (e) {
+            setToastMsg(`生成錯誤：${e.message}`);
+            setTimeout(() => setToastMsg(''), 3000);
+          } finally {
+            setLoading(false);
+          }
+        }, 10);
+      }, [points, patternType]);
 
       useEffect(() => {
         if (points.length === 0) { setStats({ distKm: 0, timeMin: 0 }); return; }
-        let totalDist = 0;
-        for (let i = 0; i < points.length; i++) {
-           const curPts = getFlwPts(points[i], i, points);
-           for (let j = 0; j < curPts.length - 1; j++) {
-               const dLat = (curPts[j+1].l - curPts[j].l) * 111.132;
-               const dLon = (curPts[j+1].n - curPts[j].n) * 111.132 * Math.cos(points[i].lat * Math.PI / 180);
-               totalDist += Math.hypot(dLat, dLon);
-           }
+        try {
+          let totalDist = 0;
+          for (let i = 0; i < points.length; i++) {
+             const curPts = getFlwPts(points[i], i, points);
+             for (let j = 0; j < curPts.length - 1; j++) {
+                 totalDist += calcDistanceKm({lat: curPts[j].l, lon: curPts[j].n}, {lat: curPts[j+1].l, lon: curPts[j+1].n});
+             }
+          }
+          for (let i = 0; i < points.length - 1; i++) {
+               const curPts = getFlwPts(points[i], i, points); const nextPts = getFlwPts(points[i+1], i+1, points);
+               const pExit = curPts[curPts.length - 1]; const pEnter = nextPts[0]; 
+               totalDist += calcDistanceKm({lat: pExit.l, lon: pExit.n}, {lat: pEnter.l, lon: pEnter.n});
+          }
+          const tMins = (totalDist / speedKmH) * 60;
+          setStats({ distKm: totalDist.toFixed(2), timeMin: Math.round(tMins) });
+        } catch(e) {
+          console.error("Stats Error:", e);
         }
-        for (let i = 0; i < points.length - 1; i++) {
-             const curPts = getFlwPts(points[i], i, points); const nextPts = getFlwPts(points[i+1], i+1, points);
-             const pExit = curPts[curPts.length - 1]; const pEnter = nextPts[0]; 
-             const dLat = (pEnter.l - pExit.l) * 111.132;
-             const dLon = (pEnter.n - pExit.n) * 111.132 * Math.cos(points[i].lat * Math.PI / 180);
-             totalDist += Math.hypot(dLat, dLon);
-        }
-        const tMins = (totalDist / speedKmH) * 60;
-        setStats({ distKm: totalDist.toFixed(2), timeMin: Math.round(tMins) });
       }, [points, speedKmH, patternType]);
 
-      const handleDiagnostic = () => {
+      const handleDiagnostic = useCallback(() => {
         if (points.length <= 1) { setDiagnosticMsg({ type: 'info', text: '請至少輸入兩個座標才能診斷。' }); return; }
-        let warnings = [];
-        for (let i = 0; i < points.length - 1; i++) {
-            const curPts = getFlwPts(points[i], i, points); const nextPts = getFlwPts(points[i+1], i+1, points);
-            const pExit = curPts[curPts.length - 1]; const pEnter = nextPts[0];
-            const dLat = (pEnter.l - pExit.l) * 111132; const dLon = (pEnter.n - pExit.n) * 111132 * Math.cos(points[i].lat * Math.PI / 180);
-            const distMeters = Math.hypot(dLat, dLon);
-            
-            if (distMeters > 50 && patternType !== 'O') {
-                 const cur = points[i]; const next = points[i+1];
-                 const goingSouth = next.lat < cur.lat; const goingEast = next.lon > cur.lon;
-                 let suggestedModes = [];
-                 if (goingSouth) suggestedModes.push('C (右上進)'); else suggestedModes.push('D (右下進)');
-                 if (goingEast) suggestedModes.push('A (左上進)'); else suggestedModes.push('B (左下進)');
+        try {
+          let warnings = [];
+          for (let i = 0; i < points.length - 1; i++) {
+              const curPts = getFlwPts(points[i], i, points); const nextPts = getFlwPts(points[i+1], i+1, points);
+              const pExit = curPts[curPts.length - 1]; const pEnter = nextPts[0];
+              const distMeters = calcDistanceM({lat: pExit.l, lon: pExit.n}, {lat: pEnter.l, lon: pEnter.n});
+              
+              if (patternType !== 'O') {
+                 const cur = points[i]; 
+                 const dirs = ['NW_SE', 'SW_NE', 'NE_SW', 'SE_NW'];
+                 let bestDir = cur.dir;
+                 let minDist = distMeters;
 
-                 const badExitForSouth = (cur.dir === 'SW_NE' || cur.dir === 'SE_NW'); 
-                 const badExitForNorth = (cur.dir === 'NW_SE' || cur.dir === 'NE_SW');
+                 // 智慧模擬：測試 4 個方向，若能有效縮短距離 (大於 15m) 才給建議
+                 for(const d of dirs) {
+                     if (d === cur.dir) continue;
+                     const testPts = getFlwPts({...cur, dir: d}, i, points);
+                     const testExit = testPts[testPts.length - 1];
+                     const testDist = calcDistanceM({lat: testExit.l, lon: testExit.n}, {lat: pEnter.l, lon: pEnter.n});
+                     
+                     if (testDist < minDist - 15) {
+                         minDist = testDist;
+                         bestDir = d;
+                     }
+                 }
 
-                 if (goingSouth && badExitForSouth) warnings.push(`警告：點 ${i+1} 往南到點 ${i+2} 會折返 (空飛 ${Math.round(distMeters)}m)，建議點 ${i+1} 改為 ${suggestedModes.join(' 或 ')}！`);
-                 else if (!goingSouth && badExitForNorth) warnings.push(`警告：點 ${i+1} 往北到點 ${i+2} 會折返 (空飛 ${Math.round(distMeters)}m)，建議點 ${i+1} 改為 ${suggestedModes.join(' 或 ')}！`);
-                 else warnings.push(`警告：點 ${i+1} 至點 ${i+2} 銜接不順 (空飛 ${Math.round(distMeters)}m)，建議改為 ${suggestedModes.join(' 或 ')}。`);
-                 break; 
-            }
+                 if (bestDir !== cur.dir) {
+                     warnings.push(`點 ${i+1} 往 點 ${i+2} 銜接較遠 (${Math.round(distMeters)}m)，建議點 ${i+1} 改為「${DIRECTIONS[bestDir]}」可縮短至 ${Math.round(minDist)}m！`);
+                     break; 
+                 }
+              }
+          }
+          if (warnings.length > 0) setDiagnosticMsg({ type: 'warning', text: warnings[0] }); 
+          else setDiagnosticMsg({ type: 'success', text: `✨ 路線分析完美，目前無交叉與嚴重空跑！${patternType==='O'?'(O型已自動適應)':''}` });
+          setTimeout(() => setDiagnosticMsg(null), 8000); 
+        } catch(e) {
+          setDiagnosticMsg({ type: 'warning', text: `診斷發生錯誤：${e.message}` });
         }
-        if (warnings.length > 0) setDiagnosticMsg({ type: 'warning', text: warnings[0] }); 
-        else setDiagnosticMsg({ type: 'success', text: `✨ 路線分析完美，目前無交叉與嚴重空跑！${patternType==='O'?'(O型已套用微調參數)':''}` });
-        setTimeout(() => setDiagnosticMsg(null), 8000); 
-      };
+      }, [points, patternType]);
 
       const vData = useMemo(() => {
         if (!points.length) return null;
@@ -380,7 +456,6 @@
         const pPaths = points.map((pt, i) => getFlwPts(pt, i, points)); const fPaths = points.map((pt, i) => getFrtPt(pt, i));
         [...pPaths.flat(), ...fPaths].forEach(p => { if(p.l<ml) ml=p.l; if(p.l>xl) xl=p.l; if(p.n<mn) mn=p.n; if(p.n>xn) xn=p.n; });
         
-        // 修正地圖比例變形問題：強制維持經緯度 1:1 的物理比例 (含 cos 補償)
         if (xl === ml) { xl += 0.0005; ml -= 0.0005; }
         if (xn === mn) { xn += 0.0005; mn -= 0.0005; }
         const midLat = (ml + xl) / 2;
@@ -389,7 +464,7 @@
         
         const dLat = xl - ml;
         const dLonEquiv = (xn - mn) * lonScale;
-        const maxDeg = Math.max(dLat, dLonEquiv) * 1.15; // 加上 15% Padding
+        const maxDeg = Math.max(dLat, dLonEquiv) * 1.15; 
         
         const fMinLat = midLat - maxDeg / 2;
         const fMaxLat = midLat + maxDeg / 2;
@@ -401,8 +476,8 @@
             y: 2000 - (((lat - fMinLat) / (fMaxLat - fMinLat)) * 2000) 
         });
         const c = { lat: midLat, lon: midLon }; 
-        const r30 = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + 30/111132, c.lon).y);
-        const r40 = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + 40/111132, c.lon).y);
+        const r30 = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + CONSTANTS.FLW_SAFE_RADIUS_M/CONSTANTS.LAT_TO_M, c.lon).y);
+        const r40 = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + CONSTANTS.FLW_MAX_RADIUS_M/CONSTANTS.LAT_TO_M, c.lon).y);
         return { toSVG, r30, r40, pPaths: pPaths.map(pth => pth.map(p => toSVG(p.l, p.n))), fPaths: fPaths.map(p => toSVG(p.l, p.n)) };
       }, [points, patternType]);
 
@@ -411,13 +486,16 @@
       const currentOut = outputTab === 'planting' ? (outputFormat === 'gpx' ? outputs.plantingGpx : outputs.plantingCsv) : (outputFormat === 'gpx' ? outputs.fruitGpx : outputs.fruitCsv);
       
       const copyGPX = () => { 
+        if(!currentOut) return;
         const ta = document.createElement('textarea'); ta.value = currentOut; ta.style.position = 'fixed'; 
         document.body.appendChild(ta); ta.select(); 
-        try { document.execCommand('copy'); } catch(err) {} 
-        document.body.removeChild(ta); setCopied(true); setTimeout(()=>setCopied(false), 2000); 
+        try { document.execCommand('copy'); setCopied(true); setTimeout(()=>setCopied(false), 2000); } 
+        catch(err) { console.error("複製失敗", err); } 
+        finally { document.body.removeChild(ta); }
       };
 
       const dlGPX = () => { 
+        if(!currentOut) return;
         const ext = outputFormat === 'gpx' ? 'gpx' : 'txt';
         const mime = outputFormat === 'gpx' ? 'text/xml' : 'text/plain';
         const typeName = patternType === 'S' ? 'S' : patternType === 'N' ? 'N' : 'O';
@@ -431,7 +509,6 @@
         a.click(); 
       };
 
-      // V27：補回 onClick 旋轉事件
       const handleFlowerClick = (index) => {
          const newPts = [...points];
          newPts[index].angle = (newPts[index].angle + 45) % 360;
@@ -442,6 +519,12 @@
 
       return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-0 relative pb-4">
+          {loading && (
+            <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 rounded-xl">
+              <i className={`fas fa-spinner fa-spin text-3xl text-${themeColor}-400`}></i>
+              <span className={`ml-3 text-${themeColor}-400 font-bold tracking-widest`}>AI 運算中...</span>
+            </div>
+          )}
           {toastMsg && <div className={`absolute top-4 left-1/2 transform -translate-x-1/2 bg-${themeColor}-600 text-white px-6 py-3 rounded-full shadow-lg z-50 animate-bounce flex items-center gap-2 font-bold text-sm`}><i className="fas fa-info-circle"></i>{toastMsg}</div>}
           {diagnosticMsg && <div className={`absolute top-16 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-2xl z-50 flex items-center gap-2 font-bold text-sm ${diagnosticMsg.type === 'warning' ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'}`}><i className={`fas ${diagnosticMsg.type === 'warning' ? 'fa-exclamation-triangle' : 'fa-check-circle'}`}></i>{diagnosticMsg.text}</div>}
 
@@ -456,7 +539,7 @@
                 </div>
               </div>
               <textarea className={`w-full h-12 p-2 bg-slate-900 border border-slate-600 rounded focus:border-${themeColor}-500 font-mono text-[10px] text-${themeColor}-100 custom-scrollbar`} value={rawInput} onChange={(e)=>setRawInput(e.target.value)} placeholder="請輸入座標..."></textarea>
-              <button onClick={handleParse} className={`mt-2 w-full bg-${themeColor}-600 text-white py-1.5 rounded font-bold text-xs shadow-lg transition hover:brightness-110`}><i className="fas fa-magic"></i> 解析座標</button>
+              <button onClick={handleParse} disabled={loading} className={`mt-2 w-full bg-${themeColor}-600 text-white py-1.5 rounded font-bold text-xs shadow-lg transition hover:brightness-110 disabled:opacity-50`}><i className="fas fa-magic"></i> 解析座標</button>
             </div>
             
             <div className="bg-slate-800 p-2 sm:p-3 rounded-xl border border-slate-700 shadow-md flex items-center justify-between shrink-0">
@@ -471,8 +554,8 @@
               <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-700 shrink-0">
                 <h2 className={`text-xs sm:text-sm font-bold text-${themeColor}-400 flex items-center gap-2`}><i className="fas fa-sliders-h"></i> 2. 序列微調</h2>
                 <div className="flex gap-2">
-                    <button onClick={handleDiagnostic} className="bg-rose-500/20 text-rose-400 hover:bg-rose-500/40 px-2 py-1 rounded text-[10px] font-bold transition active:scale-95"><i className="fas fa-brain"></i> 智慧診斷</button>
-                    <button onClick={handleOptimize} className="bg-blue-500/20 text-blue-400 hover:bg-blue-500/40 px-2 py-1 rounded text-[10px] font-bold transition active:scale-95 flex items-center gap-1"><i className="fas fa-bolt"></i> TSP排序</button>
+                    <button onClick={handleDiagnostic} disabled={loading} className="bg-rose-500/20 text-rose-400 hover:bg-rose-500/40 px-2 py-1 rounded text-[10px] font-bold transition active:scale-95 disabled:opacity-50"><i className="fas fa-brain"></i> 智慧診斷</button>
+                    <button onClick={handleOptimize} disabled={loading} className="bg-blue-500/20 text-blue-400 hover:bg-blue-500/40 px-2 py-1 rounded text-[10px] font-bold transition active:scale-95 flex items-center gap-1 disabled:opacity-50"><i className="fas fa-bolt"></i> TSP排序</button>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar min-h-0">
@@ -481,13 +564,13 @@
                   return (
                     <div key={pt.id} className="bg-slate-700 px-1.5 py-1 rounded-md text-xs border border-slate-600 flex items-center gap-1 transition-all">
                       <span className={`text-white w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 bg-${themeColor}-500`}>{i+1}</span>
-                      <select className="bg-slate-900 border-none rounded py-0.5 px-1 text-[10px] text-slate-200 focus:ring-1 focus:ring-emerald-500 flex-1 min-w-0" value={safeDir} onChange={(e)=>updatePoint(i,'dir',e.target.value)}>
-                        {patternType==='O'?Object.entries(O_DIRECTIONS).map(([k,v])=><option key={k} value={k}>{v}</option>):Object.entries(DIRECTIONS).map(([k,v])=><option key={k} value={k}>{v.split(' ')[0]}</option>)}
+                      <select className="bg-slate-900 border-none rounded py-0.5 px-1 text-[10px] text-slate-200 focus:ring-1 focus:ring-emerald-500 flex-[2] min-w-0 truncate" value={safeDir} onChange={(e)=>updatePoint(i,'dir',e.target.value)}>
+                        {patternType==='O'?Object.entries(O_DIRECTIONS).map(([k,v])=><option key={k} value={k}>{v}</option>):Object.entries(DIRECTIONS).map(([k,v])=><option key={k} value={k}>{v}</option>)}
                       </select>
-                      <select className={`bg-${themeColor}-900/50 border-none rounded py-0.5 px-1 text-[10px] text-${themeColor}-200 w-[55px] shrink-0`} value={pt.angle||0} onChange={(e)=>updatePoint(i,'angle',parseInt(e.target.value))}>
-                        {patternType==='O'?O_ANGLES.map(a=><option key={a.value} value={a.value}>{a.label}</option>):ANGLES.map(a=><option key={a.value} value={a.value}>{a.label.split(' ')[0]}</option>)}
+                      <select className={`bg-${themeColor}-900/50 border-none rounded py-0.5 px-1 text-[10px] text-${themeColor}-200 flex-1 min-w-0 truncate focus:ring-1 focus:ring-${themeColor}-500`} value={pt.angle||0} onChange={(e)=>updatePoint(i,'angle',parseInt(e.target.value))}>
+                        {patternType==='O'?O_ANGLES.map(a=><option key={a.value} value={a.value}>{a.label}</option>):ANGLES.map(a=><option key={a.value} value={a.value}>{a.label}</option>)}
                       </select>
-                      <div className="flex gap-0.5">
+                      <div className="flex gap-0.5 shrink-0">
                         <button onClick={()=>movePoint(i,-1)} disabled={i===0} className="text-slate-400 disabled:opacity-20"><i className="fas fa-arrow-up text-[10px]"></i></button>
                         <button onClick={()=>movePoint(i,1)} disabled={i===points.length-1} className="text-slate-400 disabled:opacity-20"><i className="fas fa-arrow-down text-[10px]"></i></button>
                         <button onClick={()=>deletePoint(i)} className="text-red-400 hover:text-red-300"><i className="fas fa-trash text-[10px]"></i></button>
@@ -499,7 +582,7 @@
             </div>
 
             <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-xl shrink-0">
-              <button onClick={generate} className={`w-full text-${patternType==='O'?'white':'slate-900'} font-bold py-1.5 rounded-lg shadow-lg mb-2 active:scale-95 transition text-xs bg-${themeColor}-500`}><i className="fas fa-play"></i> 產生雙路線</button>
+              <button onClick={generate} disabled={loading} className={`w-full text-${patternType==='O'?'white':'slate-900'} font-bold py-1.5 rounded-lg shadow-lg mb-2 active:scale-95 transition text-xs bg-${themeColor}-500 disabled:opacity-50`}><i className="fas fa-play"></i> 產生雙路線</button>
               <div className="flex justify-between items-center mb-1.5 gap-2">
                  <div className="flex bg-slate-900 rounded p-1 flex-1">
                    <button onClick={()=>setOutputTab('planting')} className={`flex-1 text-[10px] py-1 rounded font-bold transition ${outputTab==='planting'?`bg-${themeColor}-500 text-${patternType==='O'?'white':'slate-900'}`:'text-slate-400'}`}>種植</button>
@@ -529,7 +612,6 @@
               {vData && (
                 <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.k})`}>
                   <g transform="translate(100, 100) scale(0.9)">
-                    {/* 畫花朵間的連接虛線 */}
                     {vData.pPaths.map((p, i) => i < vData.pPaths.length-1 ? <line key={`l${i}`} x1={p[p.length-1].x} y1={p[p.length-1].y} x2={vData.pPaths[i+1][0].x} y2={vData.pPaths[i+1][0].y} stroke="#64748b" strokeWidth={2/transform.k} strokeDasharray="10,10"/> : null)}
                     
                     {vData.pPaths.map((p, i) => {
@@ -540,7 +622,6 @@
                         <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.r40} fill={rc} fillOpacity="0.05" stroke="#64748b" strokeWidth={1.5/transform.k} strokeDasharray="5,5"/>
                         <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.r30} fill="none" stroke="#f59e0b" strokeWidth={1/transform.k} strokeDasharray="2,2" opacity="0.4"/>
                         
-                        {/* 補回：中心可點擊旋轉的實心圓 */}
                         <circle 
                             cx={vData.toSVG(points[i].lat,points[i].lon).x} 
                             cy={vData.toSVG(points[i].lat,points[i].lon).y} 
@@ -552,18 +633,15 @@
                         />
                         <text x={vData.toSVG(points[i].lat,points[i].lon).x} y={vData.toSVG(points[i].lat,points[i].lon).y} textAnchor="middle" dominantBaseline="central" fill="#0f172a" fontSize={24/transform.k} fontWeight="bold" className="pointer-events-none">{i+1}</text>
                         
-                        {/* 畫種植路徑 (Polyline) */}
                         <polyline points={p.map(x=>`${x.x},${x.y}`).join(' ')} fill="none" stroke={lc} strokeWidth={4/transform.k} strokeLinejoin="round" strokeLinecap="round" className="pointer-events-none"/>
                         
                         <circle cx={p[0].x} cy={p[0].y} r={vData.r30*0.15} fill="#60a5fa" className="pointer-events-none"/>
                         <circle cx={p[p.length-1].x} cy={p[p.length-1].y} r={vData.r30*0.15} fill="#f87171" className="pointer-events-none"/>
                         
-                        {/* 補回：個別採果軌跡點 (紫色) */}
                         <circle cx={vData.fPaths[i].x} cy={vData.fPaths[i].y} r={vData.r30*0.15} fill="#e879f9" className="pointer-events-none"/>
                       </g>)
                     })}
                     
-                    {/* 補回：採果連續軌跡線 (紫色虛線) */}
                     <polyline points={vData.fPaths.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke="#e879f9" strokeWidth={2.5/transform.k} strokeLinejoin="round" strokeLinecap="round" strokeDasharray="5,5" className="pointer-events-none"/>
                   </g>
                 </g>
@@ -584,101 +662,122 @@
       const [vData, setVData] = useState(null);
       const [copied, setCopied] = useState(false);
       const [stats, setStats] = useState({ dist: 0, time: 0 });
+      const [loading, setLoading] = useState(false);
 
       const svgRef = useRef(null);
       const [transform, setTransform] = useState({ k: 1, x: 0, y: 0 });
       const transformRef = useRef(transform); transformRef.current = transform;
 
-      const generateGrid = () => {
-        const { startCoord, width: wStr, rows: rStr, axis, sweepDir, advDir, speedKmH } = config;
-        const match = startCoord.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
-        if (!match) return;
-        const lat = parseFloat(match[1]); const lon = parseFloat(match[2]);
-        const w = parseFloat(wStr); const r = parseInt(rStr, 10); const speed = parseFloat(speedKmH) || 18;
-        
-        const spacingKm = 0.0778; 
-        const mLon = 111.132 * Math.cos(lat * Math.PI / 180); 
-        const dLatStep = spacingKm / 111.132;
-        const dLonStep = spacingKm / mLon;
+      const generateGrid = useCallback(() => {
+        setLoading(true);
+        setTimeout(() => {
+          try {
+            const { startCoord, width: wStr, rows: rStr, axis, sweepDir, advDir, speedKmH } = config;
+            const match = startCoord.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
+            if (!match) { alert('請輸入有效的起點座標格式！'); setLoading(false); return; }
+            const lat = parseFloat(match[1]); const lon = parseFloat(match[2]);
+            if (!isValidCoord(lat, lon)) { alert('座標數值超出地球範圍（緯度 -90~90，經度 -180~180）'); setLoading(false); return; }
 
-        let pts = [];
+            const w = parseFloat(wStr); const r = parseInt(rStr, 10); const speed = parseFloat(speedKmH) || 18;
+            if (isNaN(w) || isNaN(r)) { setLoading(false); return; }
+            
+            const mLon = getLonToMeters(lat); 
+            const dLatStep = CONSTANTS.S2_SPACING_KM / (CONSTANTS.LAT_TO_M / 1000);
+            const dLonStep = CONSTANTS.S2_SPACING_KM / (mLon / 1000);
 
-        const getEW = (sLat, sLon, numR, lineW, sw, adv) => {
-            let res = []; const dLonLine = lineW / mLon;
-            for (let i = 0; i < numR; i++) {
-                const isEven = i % 2 === 0;
-                const curLat = adv === 'N' ? sLat + (i * dLatStep) : sLat - (i * dLatStep);
-                let p1Lon = (sw === 'W') ? (isEven ? sLon : sLon - dLonLine) : (isEven ? sLon : sLon + dLonLine);
-                let p2Lon = (sw === 'W') ? (isEven ? sLon - dLonLine : sLon) : (isEven ? sLon + dLonLine : sLon);
-                res.push({ lat: curLat, lon: p1Lon, name: `EW_R${i+1}_1` }); 
-                res.push({ lat: curLat, lon: p2Lon, name: `EW_R${i+1}_2` });
+            let pts = [];
+
+            const getEW = (sLat, sLon, numR, lineW, sw, adv) => {
+                let res = []; const dLonLine = lineW / (mLon / 1000);
+                for (let i = 0; i < numR; i++) {
+                    const isEven = i % 2 === 0;
+                    const curLat = adv === 'N' ? sLat + (i * dLatStep) : sLat - (i * dLatStep);
+                    let p1Lon = (sw === 'W') ? (isEven ? sLon : sLon - dLonLine) : (isEven ? sLon : sLon + dLonLine);
+                    let p2Lon = (sw === 'W') ? (isEven ? sLon - dLonLine : sLon) : (isEven ? sLon + dLonLine : sLon);
+                    res.push({ lat: curLat, lon: p1Lon, name: `EW_R${i+1}_1` }); 
+                    res.push({ lat: curLat, lon: p2Lon, name: `EW_R${i+1}_2` });
+                }
+                return res;
+            };
+
+            const getNS = (sLat, sLon, numC, lineH, sw, adv) => {
+                let res = []; const dLatLine = lineH / (CONSTANTS.LAT_TO_M / 1000);
+                for (let i = 0; i < numC; i++) {
+                    const isEven = i % 2 === 0;
+                    const curLon = adv === 'E' ? sLon + (i * dLonStep) : sLon - (i * dLonStep);
+                    let p1Lat = (sw === 'N') ? (isEven ? sLat : sLat + dLatLine) : (isEven ? sLat : sLat - dLatLine);
+                    let p2Lat = (sw === 'N') ? (isEven ? sLat + dLatLine : sLat) : (isEven ? sLat - dLatLine : sLat);
+                    res.push({ lat: p1Lat, lon: curLon, name: `NS_C${i+1}_1` }); 
+                    res.push({ lat: p2Lat, lon: curLon, name: `NS_C${i+1}_2` });
+                }
+                return res;
+            };
+
+            if (axis === 'EW') pts = getEW(lat, lon, r, w, sweepDir, advDir);
+            else if (axis === 'NS') pts = getNS(lat, lon, r, w, sweepDir, advDir);
+            else {
+                const totalH = (r - 1) * CONSTANTS.S2_SPACING_KM;
+                const nsCols = Math.ceil(w / CONSTANTS.S2_SPACING_KM) + 1;
+                const ew = getEW(lat, lon, r, w, sweepDir, advDir);
+                const ns = getNS(lat, lon, nsCols, totalH, advDir, sweepDir); 
+                pts = [...ew, ...ns];
             }
-            return res;
-        };
 
-        const getNS = (sLat, sLon, numC, lineH, sw, adv) => {
-            let res = []; const dLatLine = lineH / 111.132;
-            for (let i = 0; i < numC; i++) {
-                const isEven = i % 2 === 0;
-                const curLon = adv === 'E' ? sLon + (i * dLonStep) : sLon - (i * dLonStep);
-                let p1Lat = (sw === 'N') ? (isEven ? sLat : sLat + dLatLine) : (isEven ? sLat : sLat - dLatLine);
-                let p2Lat = (sw === 'N') ? (isEven ? sLat + dLatLine : sLat) : (isEven ? sLat - dLatLine : sLat);
-                res.push({ lat: p1Lat, lon: curLon, name: `NS_C${i+1}_1` }); 
-                res.push({ lat: p2Lat, lon: curLon, name: `NS_C${i+1}_2` });
-            }
-            return res;
-        };
+            const td = pts.reduce((acc, p, i) => i===0 ? 0 : acc + calcDistanceKm(pts[i-1], p), 0);
+            setStats({ dist: td.toFixed(2), time: Math.round((td / speed) * 60) });
 
-        if (axis === 'EW') pts = getEW(lat, lon, r, w, sweepDir, advDir);
-        else if (axis === 'NS') pts = getNS(lat, lon, r, w, sweepDir, advDir);
-        else {
-            const totalH = (r - 1) * spacingKm;
-            const nsCols = Math.ceil(w / spacingKm) + 1;
-            const ew = getEW(lat, lon, r, w, sweepDir, advDir);
-            const ns = getNS(lat, lon, nsCols, totalH, advDir, sweepDir); 
-            pts = [...ew, ...ns];
-        }
+            let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V31">\n  <trk><name>S2_Sweep</name><trkseg>\n`;
+            let csv = '';
+            pts.forEach(p => { xml += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}"><name>${p.name}</name></trkpt>\n`; csv += `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}\n`; });
+            xml += `  </trkseg></trk></gpx>`; 
+            setGpxOut(xml); setCsvOut(csv);
+            
+            let ml = Math.min(...pts.map(p=>p.lat)), xl = Math.max(...pts.map(p=>p.lat)), mn = Math.min(...pts.map(p=>p.lon)), xn = Math.max(...pts.map(p=>p.lon));
+            
+            if (xl === ml) { xl += 0.0005; ml -= 0.0005; }
+            if (xn === mn) { xn += 0.0005; mn -= 0.0005; }
+            const midLat = (ml + xl) / 2;
+            const midLon = (mn + xn) / 2;
+            const lonScale = Math.cos(midLat * Math.PI / 180);
+            
+            const dLat = xl - ml;
+            const dLonEquiv = (xn - mn) * lonScale;
+            const maxDeg = Math.max(dLat, dLonEquiv) * 1.15;
+            
+            const fMinLat = midLat - maxDeg / 2;
+            const fMaxLat = midLat + maxDeg / 2;
+            const fMinLon = midLon - (maxDeg / lonScale) / 2;
+            const fMaxLon = midLon + (maxDeg / lonScale) / 2;
 
-        const td = pts.reduce((acc, p, i) => i===0 ? 0 : acc + Math.hypot((p.lat-pts[i-1].lat)*111.132, (p.lon-pts[i-1].lon)*111.132*Math.cos(lat*Math.PI/180)), 0);
-        setStats({ dist: td.toFixed(2), time: Math.round((td / speed) * 60) });
-
-        let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V28">\n  <trk><name>S2_Sweep</name><trkseg>\n`;
-        let csv = '';
-        pts.forEach(p => { xml += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}"><name>${p.name}</name></trkpt>\n`; csv += `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}\n`; });
-        xml += `  </trkseg></trk></gpx>`; 
-        setGpxOut(xml); setCsvOut(csv);
-        
-        let ml = Math.min(...pts.map(p=>p.lat)), xl = Math.max(...pts.map(p=>p.lat)), mn = Math.min(...pts.map(p=>p.lon)), xn = Math.max(...pts.map(p=>p.lon));
-        
-        // 修正地圖比例變形問題：強制維持經緯度 1:1 的物理比例
-        if (xl === ml) { xl += 0.0005; ml -= 0.0005; }
-        if (xn === mn) { xn += 0.0005; mn -= 0.0005; }
-        const midLat = (ml + xl) / 2;
-        const midLon = (mn + xn) / 2;
-        const lonScale = Math.cos(midLat * Math.PI / 180);
-        
-        const dLat = xl - ml;
-        const dLonEquiv = (xn - mn) * lonScale;
-        const maxDeg = Math.max(dLat, dLonEquiv) * 1.15; // 加上 15% Padding
-        
-        const fMinLat = midLat - maxDeg / 2;
-        const fMaxLat = midLat + maxDeg / 2;
-        const fMinLon = midLon - (maxDeg / lonScale) / 2;
-        const fMaxLon = midLon + (maxDeg / lonScale) / 2;
-
-        const toSVG = (l, n) => ({ 
-            x: ((n - fMinLon) / (fMaxLon - fMinLon)) * 2000, 
-            y: 2000 - (((l - fMinLat) / (fMaxLat - fMinLat)) * 2000) 
-        });
-        setVData({ toSVG, path: pts.map(p=>toSVG(p.lat, p.lon)), pts }); resetZoom();
-      };
+            const toSVG = (l, n) => ({ 
+                x: ((n - fMinLon) / (fMaxLon - fMinLon)) * 2000, 
+                y: 2000 - (((l - fMinLat) / (fMaxLat - fMinLat)) * 2000) 
+            });
+            setVData({ toSVG, path: pts.map(p=>toSVG(p.lat, p.lon)), pts }); resetZoom();
+          } catch (err) {
+            console.error(err);
+            alert('生成發生錯誤，請檢查參數！');
+          } finally {
+            setLoading(false);
+          }
+        }, 10);
+      }, [config]);
 
       useInteractiveMap(svgRef, transformRef, setTransform);
       const resetZoom = () => setTransform({ k: 1, x: 0, y: 0 });
       const currentOut = outputFormat==='gpx'?gpxOut:csvOut;
-      const copyToClipboard = () => { const ta = document.createElement('textarea'); ta.value = currentOut; ta.style.position = 'fixed'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch(err) {} document.body.removeChild(ta); setCopied(true); setTimeout(()=>setCopied(false), 2000); };
+      
+      const copyToClipboard = () => { 
+        if(!currentOut) return;
+        const ta = document.createElement('textarea'); ta.value = currentOut; ta.style.position = 'fixed'; 
+        document.body.appendChild(ta); ta.select(); 
+        try { document.execCommand('copy'); setCopied(true); setTimeout(()=>setCopied(false), 2000); } 
+        catch(err) { console.error("複製失敗", err); } 
+        finally { document.body.removeChild(ta); }
+      };
       
       const dlGPX = () => { 
+        if(!currentOut) return;
         const ext = outputFormat === 'gpx' ? 'gpx' : 'txt';
         const mime = outputFormat === 'gpx' ? 'text/xml' : 'text/plain';
         const axisName = config.axis === 'EW' ? 'EW' : config.axis === 'NS' ? 'SN' : 'Matrix';
@@ -692,9 +791,15 @@
       };
 
       return (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-0 pb-4">
-          <div className="lg:col-span-4 flex flex-col gap-4 h-[500px] lg:h-full min-h-0">
-            <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-xl">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-0 pb-4 relative">
+          {loading && (
+            <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 rounded-xl">
+              <i className="fas fa-spinner fa-spin text-3xl text-blue-400"></i>
+              <span className="ml-3 text-blue-400 font-bold tracking-widest">運算中...</span>
+            </div>
+          )}
+          <div className="lg:col-span-4 flex flex-col gap-4 lg:h-full min-h-0">
+            <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-xl shrink-0">
               <h2 className="text-xs sm:text-sm font-bold text-blue-400 mb-3"><i className="fas fa-crosshairs mr-2"></i>佈線規劃</h2>
               <input type="text" className="w-full bg-slate-900 border border-slate-600 rounded p-1.5 text-xs text-white outline-none mb-3" value={config.startCoord} onChange={(e)=>setConfig({...config, startCoord: e.target.value})} placeholder="請輸入座標..." />
               <div className="flex bg-slate-900 rounded border border-slate-600 overflow-hidden mb-3 shadow-inner">
@@ -717,16 +822,28 @@
                 </select>
               </div>
 
-              <button onClick={generateGrid} className="w-full bg-blue-600 hover:brightness-110 text-white font-bold py-2 rounded-lg shadow-lg active:scale-95 transition text-xs"><i className="fas fa-vector-square mr-2"></i>啟動規劃</button>
+              <button onClick={generateGrid} disabled={loading} className="w-full bg-blue-600 hover:brightness-110 text-white font-bold py-2 rounded-lg shadow-lg active:scale-95 transition text-xs disabled:opacity-50"><i className="fas fa-vector-square mr-2"></i>啟動規劃</button>
             </div>
+            
             <div className="flex-1 bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-xl flex flex-col min-h-[200px]">
-              <div className="flex justify-between items-center mb-2"><h2 className="text-xs sm:text-sm font-bold text-blue-400">輸出結果</h2><div className="flex bg-slate-900 rounded border border-slate-700 overflow-hidden"><button onClick={()=>setOutputFormat('gpx')} className={`px-2 py-1 text-[9px] ${outputFormat==='gpx'?'bg-blue-600 text-white':'text-slate-400'}`}>GPX</button><button onClick={()=>setOutputFormat('csv')} className={`px-2 py-1 text-[9px] ${outputFormat==='csv'?'bg-blue-600 text-white':'text-slate-400'}`}>座標</button></div></div>
-              <div className="grid grid-cols-2 gap-2 mb-2"><div className="bg-slate-900 p-1.5 rounded border border-slate-700 text-center"><span className="block text-[9px] text-slate-500">總里程</span><span className="text-blue-400 font-bold text-sm">{stats.dist} km</span></div><div className="bg-slate-900 p-1.5 rounded border border-slate-700 text-center"><span className="block text-[9px] text-slate-500">總時間</span><span className="text-blue-400 font-bold text-sm">{stats.time} min</span></div></div>
-              <div className="relative flex-1 bg-slate-900 rounded border border-slate-700 min-h-[100px] shadow-inner"><textarea className="w-full h-full bg-transparent text-[9px] p-2 text-blue-200 outline-none custom-scrollbar" readOnly value={outputFormat==='gpx'?gpxOut:csvOut} placeholder="Waiting..."></textarea>
+              <div className="flex justify-between items-center mb-2 shrink-0">
+                <h2 className="text-xs sm:text-sm font-bold text-blue-400">輸出結果</h2>
+                <div className="flex bg-slate-900 rounded border border-slate-700 overflow-hidden">
+                    <button onClick={()=>setOutputFormat('gpx')} className={`px-2 py-1 text-[9px] ${outputFormat==='gpx'?'bg-blue-600 text-white':'text-slate-400'}`}>GPX</button>
+                    <button onClick={()=>setOutputFormat('csv')} className={`px-2 py-1 text-[9px] ${outputFormat==='csv'?'bg-blue-600 text-white':'text-slate-400'}`}>座標</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mb-2 shrink-0">
+                <div className="bg-slate-900 p-1.5 rounded border border-slate-700 text-center"><span className="block text-[9px] text-slate-500">總里程</span><span className="text-blue-400 font-bold text-sm">{stats.dist} km</span></div>
+                <div className="bg-slate-900 p-1.5 rounded border border-slate-700 text-center"><span className="block text-[9px] text-slate-500">總時間</span><span className="text-blue-400 font-bold text-sm">{stats.time} min</span></div>
+              </div>
+              <div className="relative flex-1 bg-slate-900 rounded border border-slate-700 min-h-[60px] shadow-inner">
+                <textarea className="w-full h-full bg-transparent text-[9px] p-2 text-blue-200 outline-none custom-scrollbar" readOnly value={outputFormat==='gpx'?gpxOut:csvOut} placeholder="等待生成..."></textarea>
                 {currentOut && <div className="absolute bottom-1 right-1 flex gap-1"><button onClick={copyToClipboard} className="bg-slate-700 p-1 rounded active:scale-95 transition"><i className={`fas ${copied?'fa-check text-blue-400':'fa-copy text-white'} text-[10px]`}></i></button><button onClick={dlGPX} className="bg-blue-600 text-white px-2 rounded text-[10px] font-bold active:scale-95 transition"><i className="fas fa-download"></i></button></div>}
               </div>
             </div>
           </div>
+          
           <div className="lg:col-span-8 bg-slate-800/50 rounded-xl border border-slate-700 relative overflow-hidden shadow-2xl min-h-[50vh] lg:h-full flex flex-col pb-4">
              <div className="absolute top-2 left-2 z-10 flex gap-2 w-full pr-4 pointer-events-none"><span className="bg-slate-900/90 px-2 py-1.5 rounded text-[10px] border border-slate-700 text-blue-400 shadow-md backdrop-blur pointer-events-auto"><i className="fas fa-th mr-1"></i> {config.axis==='GRID'?'矩陣棋盤網格':'佈線掃蕩'}</span><button onClick={resetZoom} className="bg-slate-700/90 hover:bg-slate-600 px-2 py-1.5 rounded text-[10px] text-white backdrop-blur shadow-md pointer-events-auto ml-auto transition active:scale-95"><i className="fas fa-crosshairs mr-1"></i>置中</button></div>
             <svg ref={svgRef} className="svg-container w-full h-full flex-1" viewBox="0 0 2000 2000"><pattern id="g2" width="100" height="100" patternUnits="userSpaceOnUse"><path d="M 100 0 L 0 0 0 100" fill="none" stroke="#1e293b" strokeWidth="2"/></pattern><rect width="100%" height="100%" fill="url(#g2)" />
@@ -744,7 +861,7 @@
         <div className="lg:h-screen min-h-screen flex flex-col p-2 sm:p-4">
           <div className="max-w-[1600px] w-full mx-auto flex-1 flex flex-col min-h-0">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-3 bg-slate-800 p-3 rounded-xl border border-slate-700 shadow-lg shrink-0">
-              <div className="flex items-center gap-3 px-2"><i className="fab fa-neos text-2xl text-emerald-400"></i><div><h1 className="text-base font-black tracking-wider text-white uppercase">PIKMIN NAVIGATOR</h1><p className="text-[9px] text-slate-400 tracking-widest flex items-center gap-1">TACTICAL ROUTE PLANNER V28 <span className="bg-rose-500 text-white px-1 rounded-sm shadow-sm text-[8px] font-bold">還在測試中</span></p></div></div>
+              <div className="flex items-center gap-3 px-2"><i className="fab fa-neos text-2xl text-emerald-400"></i><div><h1 className="text-base font-black tracking-wider text-white uppercase">PIKMIN NAVIGATOR</h1><p className="text-[9px] text-slate-400 tracking-widest flex items-center gap-1">TACTICAL ROUTE PLANNER V31 <span className="bg-rose-500 text-white px-1 rounded-sm shadow-sm text-[8px] font-bold">改了好多版</span></p></div></div>
               <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-700 w-full sm:w-auto mt-2 sm:mt-0">
                 <button onClick={()=>setAppMode('mode1')} className={`flex-1 sm:px-6 py-1.5 rounded-md text-xs font-bold transition ${appMode==='mode1'?'bg-emerald-500 text-slate-900':'text-slate-400 hover:text-emerald-400'}`}><i className="fas fa-crosshairs mr-1"></i> 精準控花</button>
                 <button onClick={()=>setAppMode('mode2')} className={`flex-1 sm:px-6 py-1.5 rounded-md text-xs font-bold transition ${appMode==='mode2'?'bg-blue-500 text-slate-900':'text-slate-400 hover:text-blue-400'}`}><i className="fas fa-satellite mr-1"></i> S2掃蕩</button>
