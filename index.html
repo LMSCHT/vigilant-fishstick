@@ -40,29 +40,13 @@
 
     // --- 【共用 Helper：防呆座標驗證】 ---
     const isValidCoord = (lat, lon) => {
-      return !isNaN(lat) && !isNaN(lon) &&
-             lat >= CONSTANTS.MIN_LAT && lat <= CONSTANTS.MAX_LAT &&
-             lon >= CONSTANTS.MIN_LON && lon <= CONSTANTS.MAX_LON;
+      return !isNaN(lat) && !isNaN(lon) && lat >= CONSTANTS.MIN_LAT && lat <= CONSTANTS.MAX_LAT && lon >= CONSTANTS.MIN_LON && lon <= CONSTANTS.MAX_LON;
     };
 
-    // --- 【共用 Helper：經緯度距離與轉換 (DRY 原則)】 ---
-    const getLonToMeters = (lat) => {
-      return CONSTANTS.LAT_TO_M * Math.cos((lat * Math.PI) / 180);
-    };
-
-    // 回傳距離 (公里 km)
-    const calcDistanceKm = (p1, p2) => {
-      const dLat = (p1.lat - p2.lat) * (CONSTANTS.LAT_TO_M / 1000);
-      const dLon = (p1.lon - p2.lon) * (getLonToMeters(p1.lat) / 1000);
-      return Math.hypot(dLat, dLon);
-    };
-
-    // 回傳距離 (公尺 m)
-    const calcDistanceM = (p1, p2) => {
-      const dLat = (p1.lat - p2.lat) * CONSTANTS.LAT_TO_M;
-      const dLon = (p1.lon - p2.lon) * getLonToMeters(p1.lat);
-      return Math.hypot(dLat, dLon);
-    };
+    // --- 【共用 Helper：經緯度距離與轉換】 ---
+    const getLonToMeters = (lat) => CONSTANTS.LAT_TO_M * Math.cos((lat * Math.PI) / 180);
+    const calcDistanceKm = (p1, p2) => Math.hypot((p1.lat - p2.lat) * (CONSTANTS.LAT_TO_M / 1000), (p1.lon - p2.lon) * (getLonToMeters(p1.lat) / 1000));
+    const calcDistanceM = (p1, p2) => Math.hypot((p1.lat - p2.lat) * CONSTANTS.LAT_TO_M, (p1.lon - p2.lon) * getLonToMeters(p1.lat));
 
     // --- 【共用 Helper：時間戳記產生器】 ---
     const getTimestamp = () => {
@@ -70,12 +54,38 @@
       return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
     };
 
-    // --- 【共用 Hook：精準 1:1 觸控與拖曳引擎】 ---
+    // --- 【共用 Helper：Tailwind 主題顏色映射字典 (修復動態字串 BUG)】 ---
+    const getTheme = (type) => {
+      const themes = {
+        'S': { bg: 'bg-emerald-600', text: 'text-emerald-400', border: 'border-emerald-500', bgSubtle: 'bg-emerald-900/50', ring: 'focus:ring-emerald-500', hexMain: '#10b981', hexLine: '#34d399' },
+        'N': { bg: 'bg-amber-600', text: 'text-amber-400', border: 'border-amber-500', bgSubtle: 'bg-amber-900/50', ring: 'focus:ring-amber-500', hexMain: '#f59e0b', hexLine: '#fbbf24' },
+        'O': { bg: 'bg-purple-600', text: 'text-purple-400', border: 'border-purple-500', bgSubtle: 'bg-purple-900/50', ring: 'focus:ring-purple-500', hexMain: '#a855f7', hexLine: '#c084fc' }
+      };
+      return themes[type] || themes['S'];
+    };
+
+    // --- 【共用 Hook：LocalStorage 狀態記憶】 ---
+    function useStickyState(defaultValue, key) {
+      const [value, setValue] = useState(() => {
+        const stickyValue = window.localStorage.getItem(key);
+        return stickyValue !== null ? JSON.parse(stickyValue) : defaultValue;
+      });
+      useEffect(() => { window.localStorage.setItem(key, JSON.stringify(value)); }, [key, value]);
+      return [value, setValue];
+    }
+
+    // --- 【共用 Hook：精準 1:1 觸控與拖曳引擎 (導入 requestAnimationFrame)】 ---
     function useInteractiveMap(svgRef, transformRef, setTransform) {
       useEffect(() => {
         const svg = svgRef.current; if (!svg) return;
         let isDrag = false; let dStart = { clientX: 0, clientY: 0, x: 0, y: 0 }; let pDist = null; let lCenter = null;
+        let rafId = null; // 用於儲存 requestAnimationFrame ID
         const getRatios = () => { const rect = svg.getBoundingClientRect(); return { rx: 2000 / rect.width, ry: 2000 / rect.height, rect }; };
+
+        const updateTransform = (newTransform) => {
+          if (rafId) cancelAnimationFrame(rafId);
+          rafId = requestAnimationFrame(() => setTransform(newTransform));
+        };
 
         const onWheel = (e) => {
           e.preventDefault(); const cur = transformRef.current;
@@ -83,7 +93,7 @@
           if (nk < 0.01) nk = 0.01; if (nk > 50) nk = 50;
           const { rx, ry, rect } = getRatios();
           const mx = (e.clientX - rect.left) * rx; const my = (e.clientY - rect.top) * ry;
-          setTransform({ k: nk, x: mx - (mx - cur.x)*(nk/cur.k), y: my - (my - cur.y)*(nk/cur.k) });
+          updateTransform({ k: nk, x: mx - (mx - cur.x)*(nk/cur.k), y: my - (my - cur.y)*(nk/cur.k) });
         };
 
         const onTs = (e) => {
@@ -101,7 +111,7 @@
           e.preventDefault(); const cur = transformRef.current; const { rx, ry, rect } = getRatios();
           if (e.touches.length === 1 && isDrag) {
             const dx = (e.touches[0].clientX - dStart.clientX) * rx; const dy = (e.touches[0].clientY - dStart.clientY) * ry;
-            setTransform({ ...cur, x: dStart.x + dx, y: dStart.y + dy });
+            updateTransform({ ...cur, x: dStart.x + dx, y: dStart.y + dy });
           } else if (e.touches.length === 2 && pDist && lCenter) {
             const t1 = e.touches[0]; const t2 = e.touches[1];
             const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
@@ -109,7 +119,7 @@
             let nk = cur.k * (dist / pDist); if (nk < 0.01) nk = 0.01; if (nk > 50) nk = 50;
             const mx = (cClientX - rect.left) * rx; const my = (cClientY - rect.top) * ry;
             const dx = (cClientX - lCenter.clientX) * rx; const dy = (cClientY - lCenter.clientY) * ry;
-            setTransform({ k: nk, x: mx - (mx - cur.x)*(nk/cur.k) + dx, y: my - (my - cur.y)*(nk/cur.k) + dy });
+            updateTransform({ k: nk, x: mx - (mx - cur.x)*(nk/cur.k) + dx, y: my - (my - cur.y)*(nk/cur.k) + dy });
             pDist = dist; lCenter = { clientX: cClientX, clientY: cClientY };
           }
         };
@@ -127,9 +137,9 @@
         const onMm = (e) => {
           if (!isDrag) return; const { rx, ry } = getRatios();
           const dx = (e.clientX - dStart.clientX) * rx; const dy = (e.clientY - dStart.clientY) * ry;
-          setTransform({ ...transformRef.current, x: dStart.x + dx, y: dStart.y + dy });
+          updateTransform({ ...transformRef.current, x: dStart.x + dx, y: dStart.y + dy });
         };
-        const onMu = () => isDrag = false;
+        const onMu = () => { isDrag = false; if(rafId) cancelAnimationFrame(rafId); };
 
         svg.addEventListener('wheel', onWheel, { passive: false });
         svg.addEventListener('touchstart', onTs, { passive: false });
@@ -139,6 +149,7 @@
         return () => {
           svg.removeEventListener('wheel', onWheel); svg.removeEventListener('touchstart', onTs); svg.removeEventListener('touchmove', onTm); svg.removeEventListener('touchend', onTe); svg.removeEventListener('touchcancel', onTe);
           svg.removeEventListener('mousedown', onMd); window.removeEventListener('mousemove', onMm); window.removeEventListener('mouseup', onMu);
+          if (rafId) cancelAnimationFrame(rafId);
         };
       }, []); 
     }
@@ -150,17 +161,19 @@
       const O_DIRECTIONS = { 'AUTO': '自動判斷', 'CW': '強制順時針', 'CCW': '強制逆時針' };
       const O_ANGLES = [{value:0,label:'0° (不偏移)'},{value:45,label:'+45° 偏移'},{value:90,label:'+90° 偏移'},{value:135,label:'+135° 偏移'},{value:180,label:'+180° 偏移'},{value:225,label:'+225° 偏移'},{value:270,label:'+270° 偏移'},{value:315,label:'+315° 偏移'}];
 
-      const [rawInput, setRawInput] = useState('');
+      // 導入 LocalStorage 狀態記憶
+      const [rawInput, setRawInput] = useStickyState('', 'pikmin_v32_m1_input');
+      const [speedKmH, setSpeedKmH] = useStickyState(18, 'pikmin_v32_m1_speed');
+      const [patternType, setPatternType] = useStickyState('O', 'pikmin_v32_m1_pattern');
+      
       const [points, setPoints] = useState([]);
       const [outputs, setOutputs] = useState({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '' });
       const [outputTab, setOutputTab] = useState('planting');
       const [outputFormat, setOutputFormat] = useState('gpx'); 
       const [copied, setCopied] = useState(false);
-      const [speedKmH, setSpeedKmH] = useState(18);
       const [stats, setStats] = useState({ distKm: 0, timeMin: 0 });
       const [toastMsg, setToastMsg] = useState('');
       const [diagnosticMsg, setDiagnosticMsg] = useState(null);
-      const [patternType, setPatternType] = useState('O');
       const [loading, setLoading] = useState(false);
 
       const svgRef = useRef(null);
@@ -231,7 +244,6 @@
         setTimeout(() => {
           try {
             let unv = [...points]; let cur = unv.shift(); let opt = [cur];
-            
             while (unv.length > 0) {
               let nIdx = 0; let minD = Infinity;
               for (let i = 0; i < unv.length; i++) {
@@ -256,7 +268,6 @@
                 }
               }
             }
-            
             setPoints(calcDirs(opt));
             setToastMsg('✨ 2-opt 交叉解纏演算法 最佳化完成！');
             setTimeout(() => setToastMsg(''), 3000);
@@ -282,7 +293,6 @@
         
         if (type === 'O') {
             let outAngle = 0; let inAngle = 0;
-            
             if (allPts.length > 0 && idx < allPts.length - 1) {
                 const next = allPts[idx + 1]; const dLon = (next.lon - lon) * Math.PI / 180;
                 const lat1 = lat * Math.PI / 180; const lat2 = next.lat * Math.PI / 180;
@@ -292,18 +302,14 @@
                 const lat1 = prev.lat * Math.PI / 180; const lat2 = lat * Math.PI / 180;
                 outAngle = Math.atan2(Math.sin(dLon) * Math.cos(lat2), Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon));
             }
-            
             if (allPts.length > 0 && idx > 0) {
                 const prev = allPts[idx - 1]; const dLon = (lon - prev.lon) * Math.PI / 180;
                 const lat1 = prev.lat * Math.PI / 180; const lat2 = lat * Math.PI / 180;
                 inAngle = Math.atan2(Math.sin(dLon) * Math.cos(lat2), Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon));
-            } else {
-                inAngle = outAngle;
-            }
+            } else { inAngle = outAngle; }
 
             outAngle += (angle * Math.PI) / 180;
             const arrivalAngle = inAngle + Math.PI; 
-            
             const cwP1 = outAngle - 7 * (Math.PI / 4);  
             const ccwP1 = outAngle + 7 * (Math.PI / 4); 
             
@@ -319,7 +325,6 @@
                 const a = isCw ? (outAngle + (i - 8) * (Math.PI / 4)) : (outAngle - (i - 8) * (Math.PI / 4));
                 b.push({ x: CONSTANTS.FLW_SAFE_RADIUS_M * Math.sin(a), y: CONSTANTS.FLW_SAFE_RADIUS_M * Math.cos(a) }); 
             }
-            
             const mLon = getLonToMeters(lat);
             return b.map(m => { return { l: lat + (m.y / CONSTANTS.LAT_TO_M), n: lon + (m.x / mLon) }; });
         } else {
@@ -356,7 +361,7 @@
         setLoading(true);
         setTimeout(() => {
           try {
-            let pGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V31">\n  <trk><name>Planting_${patternType}</name><trkseg>\n`;
+            let pGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V32">\n  <trk><name>Planting_${patternType}</name><trkseg>\n`;
             let pCsv = '';
             points.forEach((pt, idx) => {
               const np = `F${String(idx + 1).padStart(2, '0')}`;
@@ -367,7 +372,7 @@
             });
             pGpx += `  </trkseg></trk></gpx>`;
 
-            let fGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V31">\n  <trk><name>Fruit</name><trkseg>\n`;
+            let fGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V32">\n  <trk><name>Fruit</name><trkseg>\n`;
             let fCsv = '';
             points.forEach((pt, idx) => {
               const fp = getFrtPt(pt, idx);
@@ -423,7 +428,6 @@
                  let bestDir = cur.dir;
                  let minDist = distMeters;
 
-                 // 智慧模擬：測試 4 個方向，若能有效縮短距離 (大於 15m) 才給建議
                  for(const d of dirs) {
                      if (d === cur.dir) continue;
                      const testPts = getFlwPts({...cur, dir: d}, i, points);
@@ -515,44 +519,44 @@
          setPoints(newPts);
       };
 
-      const themeColor = patternType==='S'?'emerald':patternType==='N'?'amber':'purple';
+      const theme = getTheme(patternType);
 
       return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-0 relative pb-4">
           {loading && (
             <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 rounded-xl">
-              <i className={`fas fa-spinner fa-spin text-3xl text-${themeColor}-400`}></i>
-              <span className={`ml-3 text-${themeColor}-400 font-bold tracking-widest`}>AI 運算中...</span>
+              <i className={`fas fa-spinner fa-spin text-3xl ${theme.text}`}></i>
+              <span className={`ml-3 ${theme.text} font-bold tracking-widest`}>AI 運算中...</span>
             </div>
           )}
-          {toastMsg && <div className={`absolute top-4 left-1/2 transform -translate-x-1/2 bg-${themeColor}-600 text-white px-6 py-3 rounded-full shadow-lg z-50 animate-bounce flex items-center gap-2 font-bold text-sm`}><i className="fas fa-info-circle"></i>{toastMsg}</div>}
+          {toastMsg && <div className={`absolute top-4 left-1/2 transform -translate-x-1/2 ${theme.bg} text-white px-6 py-3 rounded-full shadow-lg z-50 animate-bounce flex items-center gap-2 font-bold text-sm`}><i className="fas fa-info-circle"></i>{toastMsg}</div>}
           {diagnosticMsg && <div className={`absolute top-16 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-2xl z-50 flex items-center gap-2 font-bold text-sm ${diagnosticMsg.type === 'warning' ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'}`}><i className={`fas ${diagnosticMsg.type === 'warning' ? 'fa-exclamation-triangle' : 'fa-check-circle'}`}></i>{diagnosticMsg.text}</div>}
 
-          <div className="lg:col-span-4 flex flex-col gap-3 h-[500px] sm:h-[600px] lg:h-full min-h-0">
+          <div className="lg:col-span-4 flex flex-col gap-3 h-[550px] sm:h-[600px] lg:h-full min-h-0">
             <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-xl shrink-0">
               <div className="flex justify-between items-center mb-2">
-                <h2 className={`text-xs sm:text-sm font-bold text-${themeColor}-400 flex items-center gap-2`}><i className="fas fa-list-ol"></i> 1. 貼上座標</h2>
+                <h2 className={`text-xs sm:text-sm font-bold ${theme.text} flex items-center gap-2`}><i className="fas fa-list-ol"></i> 1. 貼上座標</h2>
                 <div className="flex bg-slate-900 rounded border border-slate-600 overflow-hidden">
                   <button onClick={() => setPatternType('S')} className={`px-2 py-1 text-[9px] font-bold transition ${patternType==='S'?'bg-emerald-500 text-slate-900':'text-slate-400 hover:text-emerald-300'}`}>常規 S型</button>
                   <button onClick={() => setPatternType('N')} className={`px-2 py-1 text-[9px] font-bold transition ${patternType==='N'?'bg-amber-500 text-slate-900':'text-slate-400 hover:text-amber-300'}`}>稀有 N型</button>
                   <button onClick={() => setPatternType('O')} className={`px-2 py-1 text-[9px] font-bold transition ${patternType==='O'?'bg-purple-500 text-white':'text-slate-400 hover:text-purple-300'}`}>圓舞 O型</button>
                 </div>
               </div>
-              <textarea className={`w-full h-12 p-2 bg-slate-900 border border-slate-600 rounded focus:border-${themeColor}-500 font-mono text-[10px] text-${themeColor}-100 custom-scrollbar`} value={rawInput} onChange={(e)=>setRawInput(e.target.value)} placeholder="請輸入座標..."></textarea>
-              <button onClick={handleParse} disabled={loading} className={`mt-2 w-full bg-${themeColor}-600 text-white py-1.5 rounded font-bold text-xs shadow-lg transition hover:brightness-110 disabled:opacity-50`}><i className="fas fa-magic"></i> 解析座標</button>
+              <textarea className={`w-full h-12 p-2 bg-slate-900 border border-slate-600 rounded ${theme.border} font-mono text-[10px] text-slate-200 custom-scrollbar`} value={rawInput} onChange={(e)=>setRawInput(e.target.value)} placeholder="請輸入座標..."></textarea>
+              <button onClick={handleParse} disabled={loading} className={`mt-2 w-full ${theme.bg} text-white py-1.5 rounded font-bold text-xs shadow-lg transition hover:brightness-110 disabled:opacity-50`}><i className="fas fa-magic"></i> 解析座標</button>
             </div>
             
             <div className="bg-slate-800 p-2 sm:p-3 rounded-xl border border-slate-700 shadow-md flex items-center justify-between shrink-0">
                <div className="flex items-center gap-2"><i className="fas fa-tachometer-alt text-blue-400 text-sm"></i><input type="number" className="w-10 bg-slate-900 border border-slate-600 rounded text-center text-xs text-white outline-none" value={speedKmH} onChange={(e)=>setSpeedKmH(parseFloat(e.target.value)||1)} /><span className="text-[9px] text-slate-500">km/h</span></div>
                <div className="flex gap-4">
-                 <div className="text-right"><span className="text-[9px] text-slate-400 block">路程</span><span className={`text-${themeColor}-400 font-bold text-xs`}>{stats.distKm} km</span></div>
-                 <div className="text-right"><span className="text-[9px] text-slate-400 block">預估</span><span className={`text-${themeColor}-400 font-bold text-xs`}>{stats.timeMin} min</span></div>
+                 <div className="text-right"><span className="text-[9px] text-slate-400 block">路程</span><span className={`${theme.text} font-bold text-xs`}>{stats.distKm} km</span></div>
+                 <div className="text-right"><span className="text-[9px] text-slate-400 block">預估</span><span className={`${theme.text} font-bold text-xs`}>{stats.timeMin} min</span></div>
                </div>
             </div>
 
             <div className="flex-1 bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-xl flex flex-col min-h-0">
               <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-700 shrink-0">
-                <h2 className={`text-xs sm:text-sm font-bold text-${themeColor}-400 flex items-center gap-2`}><i className="fas fa-sliders-h"></i> 2. 序列微調</h2>
+                <h2 className={`text-xs sm:text-sm font-bold ${theme.text} flex items-center gap-2`}><i className="fas fa-sliders-h"></i> 2. 序列微調</h2>
                 <div className="flex gap-2">
                     <button onClick={handleDiagnostic} disabled={loading} className="bg-rose-500/20 text-rose-400 hover:bg-rose-500/40 px-2 py-1 rounded text-[10px] font-bold transition active:scale-95 disabled:opacity-50"><i className="fas fa-brain"></i> 智慧診斷</button>
                     <button onClick={handleOptimize} disabled={loading} className="bg-blue-500/20 text-blue-400 hover:bg-blue-500/40 px-2 py-1 rounded text-[10px] font-bold transition active:scale-95 flex items-center gap-1 disabled:opacity-50"><i className="fas fa-bolt"></i> TSP排序</button>
@@ -563,12 +567,12 @@
                   const safeDir = patternType === 'O' ? (['AUTO', 'CW', 'CCW'].includes(pt.dir) ? pt.dir : 'AUTO') : (['NW_SE', 'SW_NE', 'NE_SW', 'SE_NW'].includes(pt.dir) ? pt.dir : 'NW_SE');
                   return (
                     <div key={pt.id} className="bg-slate-700 px-1.5 py-1 rounded-md text-xs border border-slate-600 flex items-center gap-1 transition-all">
-                      <span className={`text-white w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 bg-${themeColor}-500`}>{i+1}</span>
-                      <select className="bg-slate-900 border-none rounded py-0.5 px-1 text-[10px] text-slate-200 focus:ring-1 focus:ring-emerald-500 flex-[2] min-w-0 truncate" value={safeDir} onChange={(e)=>updatePoint(i,'dir',e.target.value)}>
-                        {patternType==='O'?Object.entries(O_DIRECTIONS).map(([k,v])=><option key={k} value={k}>{v}</option>):Object.entries(DIRECTIONS).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+                      <span className={`text-white w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${theme.bg}`}>{i+1}</span>
+                      <select className={`bg-slate-900 border-none rounded py-0.5 px-1 text-[10px] text-slate-200 flex-[2] min-w-0 truncate ${theme.ring}`} value={safeDir} onChange={(e)=>updatePoint(i,'dir',e.target.value)}>
+                        {patternType==='O'?Object.entries(O_DIRECTIONS).map(([k,v])=><option key={k} value={k} className="bg-slate-800 text-slate-200">{v}</option>):Object.entries(DIRECTIONS).map(([k,v])=><option key={k} value={k} className="bg-slate-800 text-slate-200">{v}</option>)}
                       </select>
-                      <select className={`bg-${themeColor}-900/50 border-none rounded py-0.5 px-1 text-[10px] text-${themeColor}-200 flex-1 min-w-0 truncate focus:ring-1 focus:ring-${themeColor}-500`} value={pt.angle||0} onChange={(e)=>updatePoint(i,'angle',parseInt(e.target.value))}>
-                        {patternType==='O'?O_ANGLES.map(a=><option key={a.value} value={a.value}>{a.label}</option>):ANGLES.map(a=><option key={a.value} value={a.value}>{a.label}</option>)}
+                      <select className={`bg-slate-900 border border-slate-600 rounded py-0.5 px-1 text-[10px] ${theme.text} flex-1 min-w-0 truncate ${theme.ring}`} value={pt.angle||0} onChange={(e)=>updatePoint(i,'angle',parseInt(e.target.value))}>
+                        {patternType==='O'?O_ANGLES.map(a=><option key={a.value} value={a.value} className="bg-slate-800 text-white">{a.label}</option>):ANGLES.map(a=><option key={a.value} value={a.value} className="bg-slate-800 text-white">{a.label}</option>)}
                       </select>
                       <div className="flex gap-0.5 shrink-0">
                         <button onClick={()=>movePoint(i,-1)} disabled={i===0} className="text-slate-400 disabled:opacity-20"><i className="fas fa-arrow-up text-[10px]"></i></button>
@@ -582,10 +586,10 @@
             </div>
 
             <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-xl shrink-0">
-              <button onClick={generate} disabled={loading} className={`w-full text-${patternType==='O'?'white':'slate-900'} font-bold py-1.5 rounded-lg shadow-lg mb-2 active:scale-95 transition text-xs bg-${themeColor}-500 disabled:opacity-50`}><i className="fas fa-play"></i> 產生雙路線</button>
+              <button onClick={generate} disabled={loading} className={`w-full ${patternType==='O'?'text-white':'text-slate-900'} font-bold py-1.5 rounded-lg shadow-lg mb-2 active:scale-95 transition text-xs ${theme.bg} disabled:opacity-50`}><i className="fas fa-play"></i> 產生雙路線</button>
               <div className="flex justify-between items-center mb-1.5 gap-2">
                  <div className="flex bg-slate-900 rounded p-1 flex-1">
-                   <button onClick={()=>setOutputTab('planting')} className={`flex-1 text-[10px] py-1 rounded font-bold transition ${outputTab==='planting'?`bg-${themeColor}-500 text-${patternType==='O'?'white':'slate-900'}`:'text-slate-400'}`}>種植</button>
+                   <button onClick={()=>setOutputTab('planting')} className={`flex-1 text-[10px] py-1 rounded font-bold transition ${outputTab==='planting'?`${theme.bg} ${patternType==='O'?'text-white':'text-slate-900'}`:'text-slate-400'}`}>種植</button>
                    <button onClick={()=>setOutputTab('fruit')} className={`flex-1 text-[10px] py-1 rounded font-bold transition ${outputTab==='fruit'?'bg-amber-500 text-slate-900':'text-slate-400'}`}>採果</button>
                  </div>
                  <div className="flex bg-slate-900 rounded border border-slate-600 overflow-hidden shrink-0 shadow-inner">
@@ -594,8 +598,8 @@
                  </div>
               </div>
               <div className="relative h-16 bg-slate-900 rounded border border-slate-700 shadow-inner">
-                <textarea className={`w-full h-full bg-transparent text-[9px] p-2 text-${themeColor}-300 custom-scrollbar outline-none`} readOnly value={currentOut} placeholder="等待生成..."></textarea>
-                {currentOut && <div className="absolute bottom-1 right-1 flex gap-1"><button onClick={copyGPX} className="bg-slate-700 p-1 rounded active:scale-95 transition"><i className={`fas ${copied?`fa-check text-${themeColor}-400`:'fa-copy text-white'} text-[10px]`}></i></button><button onClick={dlGPX} className={`bg-${themeColor}-600 text-white px-2 rounded text-[10px] font-bold active:scale-95 transition`}><i className="fas fa-download"></i></button></div>}
+                <textarea className={`w-full h-full bg-transparent text-[9px] p-2 ${theme.text} custom-scrollbar outline-none`} readOnly value={currentOut} placeholder="等待生成..."></textarea>
+                {currentOut && <div className="absolute bottom-1 right-1 flex gap-1"><button onClick={copyGPX} className="bg-slate-700 p-1 rounded active:scale-95 transition"><i className={`fas ${copied?`fa-check ${theme.text}`:'fa-copy text-white'} text-[10px]`}></i></button><button onClick={dlGPX} className={`${theme.bg} text-white px-2 rounded text-[10px] font-bold active:scale-95 transition`}><i className="fas fa-download"></i></button></div>}
               </div>
             </div>
           </div>
@@ -615,33 +619,26 @@
                     {vData.pPaths.map((p, i) => i < vData.pPaths.length-1 ? <line key={`l${i}`} x1={p[p.length-1].x} y1={p[p.length-1].y} x2={vData.pPaths[i+1][0].x} y2={vData.pPaths[i+1][0].y} stroke="#64748b" strokeWidth={2/transform.k} strokeDasharray="10,10"/> : null)}
                     
                     {vData.pPaths.map((p, i) => {
-                      const rc = patternType==='S'?"#10b981":patternType==='N'?"#f59e0b":"#a855f7";
-                      const lc = patternType==='S'?"#34d399":patternType==='N'?"#fbbf24":"#c084fc";
                       return (
                       <g key={`f${i}`}>
-                        <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.r40} fill={rc} fillOpacity="0.05" stroke="#64748b" strokeWidth={1.5/transform.k} strokeDasharray="5,5"/>
+                        <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.r40} fill={theme.hexMain} fillOpacity="0.05" stroke="#64748b" strokeWidth={1.5/transform.k} strokeDasharray="5,5"/>
                         <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.r30} fill="none" stroke="#f59e0b" strokeWidth={1/transform.k} strokeDasharray="2,2" opacity="0.4"/>
-                        
                         <circle 
                             cx={vData.toSVG(points[i].lat,points[i].lon).x} 
                             cy={vData.toSVG(points[i].lat,points[i].lon).y} 
                             r={vData.r30*0.25} 
-                            fill={rc} 
+                            fill={theme.hexMain} 
                             className="transition-colors cursor-pointer hover:brightness-125 active:scale-90"
                             onClick={() => handleFlowerClick(i)}
                             style={{transformOrigin:`${vData.toSVG(points[i].lat,points[i].lon).x}px ${vData.toSVG(points[i].lat,points[i].lon).y}px`}} 
                         />
                         <text x={vData.toSVG(points[i].lat,points[i].lon).x} y={vData.toSVG(points[i].lat,points[i].lon).y} textAnchor="middle" dominantBaseline="central" fill="#0f172a" fontSize={24/transform.k} fontWeight="bold" className="pointer-events-none">{i+1}</text>
-                        
-                        <polyline points={p.map(x=>`${x.x},${x.y}`).join(' ')} fill="none" stroke={lc} strokeWidth={4/transform.k} strokeLinejoin="round" strokeLinecap="round" className="pointer-events-none"/>
-                        
+                        <polyline points={p.map(x=>`${x.x},${x.y}`).join(' ')} fill="none" stroke={theme.hexLine} strokeWidth={4/transform.k} strokeLinejoin="round" strokeLinecap="round" className="pointer-events-none"/>
                         <circle cx={p[0].x} cy={p[0].y} r={vData.r30*0.15} fill="#60a5fa" className="pointer-events-none"/>
                         <circle cx={p[p.length-1].x} cy={p[p.length-1].y} r={vData.r30*0.15} fill="#f87171" className="pointer-events-none"/>
-                        
                         <circle cx={vData.fPaths[i].x} cy={vData.fPaths[i].y} r={vData.r30*0.15} fill="#e879f9" className="pointer-events-none"/>
                       </g>)
                     })}
-                    
                     <polyline points={vData.fPaths.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke="#e879f9" strokeWidth={2.5/transform.k} strokeLinejoin="round" strokeLinecap="round" strokeDasharray="5,5" className="pointer-events-none"/>
                   </g>
                 </g>
@@ -655,7 +652,9 @@
 
     // --- 【子元件：模式二 S2佈線掃蕩】 ---
     function Mode2() {
-      const [config, setConfig] = useState({ startCoord: '', width: '1.5', rows: '20', axis: 'EW', sweepDir: 'W', advDir: 'N', speedKmH: 18 });
+      // 導入 LocalStorage 狀態記憶
+      const [config, setConfig] = useStickyState({ startCoord: '', width: '1.5', rows: '20', axis: 'EW', sweepDir: 'W', advDir: 'N', speedKmH: 18 }, 'pikmin_v32_m2_config');
+      
       const [gpxOut, setGpxOut] = useState('');
       const [csvOut, setCsvOut] = useState('');
       const [outputFormat, setOutputFormat] = useState('gpx');
@@ -726,7 +725,7 @@
             const td = pts.reduce((acc, p, i) => i===0 ? 0 : acc + calcDistanceKm(pts[i-1], p), 0);
             setStats({ dist: td.toFixed(2), time: Math.round((td / speed) * 60) });
 
-            let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V31">\n  <trk><name>S2_Sweep</name><trkseg>\n`;
+            let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V32">\n  <trk><name>S2_Sweep</name><trkseg>\n`;
             let csv = '';
             pts.forEach(p => { xml += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}"><name>${p.name}</name></trkpt>\n`; csv += `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}\n`; });
             xml += `  </trkseg></trk></gpx>`; 
@@ -856,12 +855,13 @@
     }
 
     function App() {
-      const [appMode, setAppMode] = useState('mode1');
+      // 導入 LocalStorage 狀態記憶
+      const [appMode, setAppMode] = useStickyState('mode1', 'pikmin_v32_appmode');
       return (
         <div className="lg:h-screen min-h-screen flex flex-col p-2 sm:p-4">
           <div className="max-w-[1600px] w-full mx-auto flex-1 flex flex-col min-h-0">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-3 bg-slate-800 p-3 rounded-xl border border-slate-700 shadow-lg shrink-0">
-              <div className="flex items-center gap-3 px-2"><i className="fab fa-neos text-2xl text-emerald-400"></i><div><h1 className="text-base font-black tracking-wider text-white uppercase">PIKMIN NAVIGATOR</h1><p className="text-[9px] text-slate-400 tracking-widest flex items-center gap-1">TACTICAL ROUTE PLANNER V31 <span className="bg-rose-500 text-white px-1 rounded-sm shadow-sm text-[8px] font-bold">改了好多版</span></p></div></div>
+              <div className="flex items-center gap-3 px-2"><i className="fab fa-neos text-2xl text-emerald-400"></i><div><h1 className="text-base font-black tracking-wider text-white uppercase">PIKMIN NAVIGATOR</h1><p className="text-[9px] text-slate-400 tracking-widest flex items-center gap-1">TACTICAL ROUTE PLANNER V32 <span className="bg-rose-500 text-white px-1 rounded-sm shadow-sm text-[8px] font-bold">改了好多版</span></p></div></div>
               <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-700 w-full sm:w-auto mt-2 sm:mt-0">
                 <button onClick={()=>setAppMode('mode1')} className={`flex-1 sm:px-6 py-1.5 rounded-md text-xs font-bold transition ${appMode==='mode1'?'bg-emerald-500 text-slate-900':'text-slate-400 hover:text-emerald-400'}`}><i className="fas fa-crosshairs mr-1"></i> 精準控花</button>
                 <button onClick={()=>setAppMode('mode2')} className={`flex-1 sm:px-6 py-1.5 rounded-md text-xs font-bold transition ${appMode==='mode2'?'bg-blue-500 text-slate-900':'text-slate-400 hover:text-blue-400'}`}><i className="fas fa-satellite mr-1"></i> S2掃蕩</button>
