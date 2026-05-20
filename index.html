@@ -337,8 +337,8 @@
 
             outAngle += (angle * Math.PI) / 180;
             const arrivalAngle = inAngle + Math.PI; 
-            const cwP1 = outAngle - 7 * (Math.PI / 4);  
-            const ccwP1 = outAngle + 7 * (Math.PI / 4); 
+            const cwP1 = outAngle - 11 * (Math.PI / 6);  
+            const ccwP1 = outAngle + 11 * (Math.PI / 6); 
             
             const norm = (a) => { let res = a % (2 * Math.PI); return res < 0 ? res + 2 * Math.PI : res; };
             const angDiff = (a, b) => { let d = Math.abs(norm(a) - norm(b)); return Math.min(d, 2 * Math.PI - d); };
@@ -348,8 +348,8 @@
             else if (dir === 'CCW') isCw = false;
             else isCw = angDiff(cwP1, arrivalAngle) <= angDiff(ccwP1, arrivalAngle);
 
-            for (let i = 1; i <= 8; i++) {
-                const a = isCw ? (outAngle + (i - 8) * (Math.PI / 4)) : (outAngle - (i - 8) * (Math.PI / 4));
+            for (let i = 1; i <= 12; i++) {
+                const a = isCw ? (outAngle + (i - 12) * (Math.PI / 6)) : (outAngle - (i - 12) * (Math.PI / 6));
                 b.push({ x: CONSTANTS.FLW_SAFE_RADIUS_M * Math.sin(a), y: CONSTANTS.FLW_SAFE_RADIUS_M * Math.cos(a) }); 
             }
             const mLon = getLonToMeters(lat);
