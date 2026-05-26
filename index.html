@@ -677,7 +677,7 @@
       );
     }
 
-    // --- 【子元件：模式二 幾何盲掃矩陣 (地圖升級版)】 ---
+    // --- 【子元件：模式二 幾何盲掃矩陣 (實裝手機端響應式順序 - 方案一)】 ---
     function Mode2({ isDark }) {
       const mapRef = useRef(null);
       const layerGroupRef = useRef(null);
@@ -713,7 +713,7 @@
             
             let pts = [];
 
-            // 加入 2D 旋轉矩陣運算 (將角度轉換為弧度，為了直覺，正數為順時針旋轉)
+            // 2D 旋轉矩陣運算
             const getEW = (sLat, sLon, numR, lineW, sw, adv, angleDeg) => {
                 let res = [];
                 const rad = -(angleDeg || 0) * Math.PI / 180; 
@@ -837,7 +837,6 @@
              color: pathColor, weight: 4, opacity: 0.8, dashArray: '8, 8'
            }).addTo(group);
 
-           // 標示起點與終點
            L.circleMarker(latlngs[0], { radius: 6, color: '#16a34a', fillColor: '#16a34a', fillOpacity: 1 }).bindPopup("起點").addTo(group);
            L.circleMarker(latlngs[latlngs.length - 1], { radius: 6, color: '#dc2626', fillColor: '#dc2626', fillOpacity: 1 }).bindPopup("終點").addTo(group);
         }
@@ -919,10 +918,12 @@
               <span className={`ml-3 font-bold tracking-widest ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>運算中...</span>
             </div>
           )}
-          <div className="lg:col-span-4 flex flex-col gap-4 h-[550px] lg:h-full min-h-0 z-20">
+          
+          {/* 【修正】手機端放在下方 (order-2)，桌面端放在左側 (order-1)，並移除鎖死的高度 (h-auto) */}
+          <div className="order-2 lg:order-1 lg:col-span-4 flex flex-col gap-4 h-auto lg:h-full min-h-0 z-20">
             <div className="p-3 sm:p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
               <h2 className={`text-xs sm:text-sm font-bold mb-3 flex items-center gap-2 ${isDark ? 'text-blue-400' : 'text-stone-800'}`}><i className="fas fa-crosshairs"></i>幾何矩陣佈線</h2>
-              
+
               {/* 加入定位與搜尋工具列 */}
               <div className="flex gap-2 mb-3">
                 <input type="text" className={`flex-grow border rounded-lg p-2 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} value={searchQuery} onChange={(e)=>setSearchQuery(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && searchLocation()} placeholder="搜尋起點 (如: 台北車站)" />
@@ -942,7 +943,7 @@
                 <div><label className="text-[9px] text-stone-500 block mb-1">區域列數</label><input type="number" className={`w-full border rounded p-1 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.rows} onChange={(e)=>setConfig({...config, rows: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
                 <div><label className="text-[9px] text-stone-500 block mb-1">時速(km/h)</label><input type="number" className={`w-full border rounded p-1 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.speedKmH} onChange={(e)=>setConfig({...config, speedKmH: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
               </div>
-              
+
               {/* 新增：網格旋轉角度拉桿 */}
               <div className="mb-4 bg-stone-200/50 dark:bg-slate-900/50 p-2 rounded-lg border border-stone-300 dark:border-slate-700 shadow-inner transition-colors duration-300">
                 <div className="flex justify-between items-center mb-1">
@@ -986,10 +987,10 @@
             </div>
           </div>
           
-          {/* 地圖預覽區 (Leaflet 替換原本的 SVG) */}
-          <div className="lg:col-span-8 rounded-xl border relative overflow-hidden min-h-[50vh] lg:h-full flex flex-col pb-4 transition-colors duration-300 bg-stone-100 dark:bg-slate-800/50 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-2xl z-10">
+          {/* 【修正】手機端放在上方 (order-1)，桌面端放在右側 (order-2)，強制保證地圖有最低顯示高度 */}
+          <div className="order-1 lg:order-2 lg:col-span-8 rounded-xl border relative overflow-hidden min-h-[45vh] lg:h-full flex flex-col pb-4 transition-colors duration-300 bg-stone-100 dark:bg-slate-800/50 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-2xl z-10">
              <div className="absolute top-2 left-2 z-20 flex gap-2 w-full pr-4 pointer-events-none">
-               <span className={`px-2 py-1.5 rounded text-[10px] border shadow-sm dark:shadow-md backdrop-blur pointer-events-auto flex items-center gap-1 font-bold transition-colors duration-300 bg-stone-100/90 dark:bg-slate-900/90 border-stone-300 dark:border-slate-700 ${isDark ? 'text-blue-400' : 'text-stone-800'}`}><i className="fas fa-hand-pointer mr-1 text-blue-500"></i> 點擊地圖任意處設定起點</span>
+               <span className={`px-2 py-1.5 rounded text-[10px] border shadow-sm dark:shadow-md backdrop-blur pointer-events-auto flex items-center gap-1 font-bold transition-colors duration-300 bg-stone-100/90 dark:bg-slate-900/90 border-stone-300 dark:border-slate-700 ${isDark ? 'text-blue-400' : 'text-stone-800'}`}><i className="fas fa-hand-pointer mr-1 text-blue-500"></i> 點擊地圖設定起點</span>
                <button onClick={centerPath} className="border px-2 py-1.5 rounded text-[10px] pointer-events-auto ml-auto transition active:scale-95 flex items-center gap-1 shadow-sm font-semibold duration-300 bg-stone-200 dark:bg-slate-700/90 border-stone-300 dark:border-slate-600 hover:bg-stone-300 dark:hover:bg-slate-600 text-stone-700 dark:text-white"><i className="fas fa-crosshairs"></i>置中軌跡</button>
              </div>
              
@@ -999,7 +1000,7 @@
       );
     }
 
-    // --- 【子元件：模式三 地圖圈地真實 S2 掃蕩】 ---
+    // --- 【子元件：模式三 地圖圈地真實 S2 掃蕩】---
     function Mode3({ isDark }) {
       const mapRef = useRef(null);
       const tileLayerRef = useRef(null);
@@ -1018,13 +1019,12 @@
       const [copied, setCopied] = useState(false);
       const [badgeText, setBadgeText] = useState('請在地圖上繪製範圍');
 
-      // 初始化 Leaflet 地圖 (確保嚴格模式下正確銷毀重構)
+      // 初始化 Leaflet 地圖
       useEffect(() => {
         if (!mapRef.current) {
           const map = L.map('leaflet-map').setView([25.033, 121.565], 15); // 預設台北 101
           mapRef.current = map;
           
-          // 永遠使用細節最豐富的 Voyager 圖資
           tileLayerRef.current = L.tileLayer(
             'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
             { maxZoom: 19, attribution: '&copy; OpenStreetMap' }
@@ -1070,7 +1070,6 @@
         };
       }, []);
 
-      // 射線演算法 (判斷點是否在多邊形內)
       const pointInPolygon = (point, vs) => {
         let x = point[0], y = point[1];
         let inside = false;
@@ -1083,7 +1082,6 @@
         return inside;
       };
 
-      // 計算 S2 網格
       useEffect(() => {
         if (drawnCoords.length < 3) return;
         setLoading(true);
@@ -1162,7 +1160,6 @@
               return;
             }
 
-            // Generate Output
             let gpxStr = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V34_Mode3">\n  <trk><name>S2_Map_Sweep</name><trkseg>\n`;
             let csvStr = '';
             finalPath.forEach(p => {
@@ -1173,7 +1170,6 @@
             setGpxOut(gpxStr); setCsvOut(csvStr);
             setBadgeText(`總計涵蓋 ${finalPath.length} 個 S2 網格`);
 
-            // Draw on Leaflet
             const group = resultLayerGroupRef.current;
             group.clearLayers();
             finalPath.forEach((p, idx) => {
