@@ -182,7 +182,7 @@
       }, []); 
     }
 
-    // --- 【子元件：模式一 精準控花】 ---
+    // --- 【子元件：模式一 精準控花】 (維持原樣) ---
     function Mode1({ isDark }) {
       const DIRECTIONS = { 'NW_SE': 'A (左上進)', 'SW_NE': 'B (左下進)', 'NE_SW': 'C (右上進)', 'SE_NW': 'D (右下進)' };
       const ANGLES = [{value:0,label:'0°(直)'},{value:45,label:'45°'},{value:90,label:'90°(橫)'},{value:135,label:'135°'},{value:180,label:'180°'},{value:225,label:'225°'},{value:270,label:'270°'},{value:315,label:'315°'}];
@@ -779,7 +779,6 @@
             
             setGeneratedPts(pts);
 
-            // 如果是按鈕觸發 (autoFit=true)，則把地圖鏡頭置中
             if (autoFit && mapRef.current && pts.length > 0) {
                const bounds = L.latLngBounds(pts.map(p => [p.lat, p.lon]));
                mapRef.current.fitBounds(bounds, { padding: [30, 30] });
@@ -793,7 +792,6 @@
         }, 10);
       }, []);
 
-      // 載入 Leaflet 地圖
       useEffect(() => {
         if (!mapRef.current) {
           const map = L.map('leaflet-map-m2').setView([25.033, 121.565], 15);
@@ -805,7 +803,6 @@
 
           layerGroupRef.current = L.layerGroup().addTo(map);
 
-          // 點擊地圖時：更新座標並「不改變縮放比例」地自動重算網格
           map.on('click', (e) => {
             const newCoord = `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
             const newConfig = { ...configRef.current, startCoord: newCoord };
@@ -823,7 +820,6 @@
         };
       }, [generateGrid]);
 
-      // 每次有新的軌跡點時，繪製在地圖上
       useEffect(() => {
         const group = layerGroupRef.current;
         if (!group) return;
@@ -923,8 +919,7 @@
           <div className="order-2 lg:order-1 lg:col-span-4 flex flex-col gap-4 h-auto lg:h-full min-h-0 z-20">
             <div className="p-3 sm:p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
               <h2 className={`text-xs sm:text-sm font-bold mb-3 flex items-center gap-2 ${isDark ? 'text-blue-400' : 'text-stone-800'}`}><i className="fas fa-crosshairs"></i>幾何矩陣佈線</h2>
-
-              {/* 加入定位與搜尋工具列 */}
+              
               <div className="flex gap-2 mb-3">
                 <input type="text" className={`flex-grow border rounded-lg p-2 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} value={searchQuery} onChange={(e)=>setSearchQuery(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && searchLocation()} placeholder="搜尋起點 (如: 台北車站)" />
                 <button onClick={searchLocation} className={`px-3 rounded-lg border transition-colors duration-300 shadow-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-white' : 'bg-white hover:bg-stone-100 border-stone-300 text-stone-700'}`} title="搜尋"><i className="fas fa-search"></i></button>
@@ -943,8 +938,7 @@
                 <div><label className="text-[9px] text-stone-500 block mb-1">區域列數</label><input type="number" className={`w-full border rounded p-1 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.rows} onChange={(e)=>setConfig({...config, rows: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
                 <div><label className="text-[9px] text-stone-500 block mb-1">時速(km/h)</label><input type="number" className={`w-full border rounded p-1 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.speedKmH} onChange={(e)=>setConfig({...config, speedKmH: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
               </div>
-
-              {/* 新增：網格旋轉角度拉桿 */}
+              
               <div className="mb-4 bg-stone-200/50 dark:bg-slate-900/50 p-2 rounded-lg border border-stone-300 dark:border-slate-700 shadow-inner transition-colors duration-300">
                 <div className="flex justify-between items-center mb-1">
                   <label className="text-[10px] font-bold text-stone-600 dark:text-slate-400"><i className="fas fa-sync-alt mr-1"></i>網格旋轉微調</label>
@@ -1000,7 +994,7 @@
       );
     }
 
-    // --- 【子元件：模式三 地圖圈地真實 S2 掃蕩】---
+    // --- 【子元件：模式三 地圖圈地真實 S2 掃蕩】 (維持原樣) ---
     function Mode3({ isDark }) {
       const mapRef = useRef(null);
       const tileLayerRef = useRef(null);
@@ -1336,7 +1330,7 @@
                 <i className={`fab fa-neos text-2xl ${isDark ? 'text-emerald-400' : 'text-stone-800'}`}></i>
                 <div>
                   <h1 className={`text-base font-black tracking-wider uppercase ${isDark ? 'text-white' : 'text-stone-800'}`}>PIKMIN NAVIGATOR</h1>
-                  <p className="text-[9px] tracking-widest flex items-center gap-1 text-stone-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V35<span className="border px-1 rounded-sm text-[8px] font-bold shadow-sm transition-colors duration-300 bg-stone-200 dark:bg-blue-500 text-stone-700 dark:text-white border-stone-300 dark:border-transparent">可能還不是最終版</span></p>
+                  <p className="text-[9px] tracking-widest flex items-center gap-1 text-stone-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V35<span className="border px-1 rounded-sm text-[8px] font-bold shadow-sm transition-colors duration-300 bg-stone-200 dark:bg-blue-500 text-stone-700 dark:text-white border-stone-300 dark:border-transparent">一直些修改版</span></p>
                 </div>
               </div>
               <div className="flex rounded-lg p-1 border w-full sm:w-auto mt-2 sm:mt-0 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700 overflow-x-auto custom-scrollbar">
