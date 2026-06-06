@@ -724,6 +724,7 @@
 
             if (axis === 'CIRCLE') {
                 // 【同心圓麥田圈模式】
+                pts.push({ lat: lat, lon: lon, name: 'Center' }); // 新增：強制將圓心作為第一個座標點
                 const layersCount = parseInt(layers, 10) || 1;
                 for (let l = 0; l < layersCount; l++) {
                     const rMeters = 20 + l * 35; // R1=20m, 每次外推35m
@@ -745,7 +746,7 @@
             } else {
                 // 【單向平行 / 矩陣棋盤模式】
                 const w = parseFloat(wStr); const r = parseInt(rStr, 10);
-                if (isNaN(w) || isNaN(r)) { setLoading(false); return; }
+              if (isNaN(w) || isNaN(r)) { setLoading(false); return; }
                 
                 const wMeters = w * 1000;
                 const dirX = sweepDir === 'R' ? 1 : -1; // R: 向右(正), L: 向左(負)
