@@ -58,7 +58,7 @@
 
     const CONSTANTS = {
       LAT_TO_M: 111132,             
-      FLW_SAFE_RADIUS_M: 20,        // 模式一完美八邊形半徑
+      FLW_SAFE_RADIUS_M: 25,        // 模式一完美八邊形半徑
       FLW_MAX_RADIUS_M: 40,         // 大花極限半徑
       S2_SPACING_KM: 0.0778,        // 掃蕩黃金間距
       MIN_LAT: -90, MAX_LAT: 90,    
@@ -337,8 +337,12 @@
             outAngle += (angle * Math.PI) / 180;
             const arrivalAngle = inAngle + Math.PI; 
             
-            const cwP1 = outAngle - 7 * (Math.PI / 4);  
-            const ccwP1 = outAngle + 7 * (Math.PI / 4); 
+            // 【V36 實戰修正】將 8 邊形暴力升級為 32 邊形平滑真圓
+            const POINT_COUNT = 32;
+            const ANGLE_STEP = (2 * Math.PI) / POINT_COUNT;
+            
+            const cwP1 = outAngle - (POINT_COUNT - 1) * ANGLE_STEP;  
+            const ccwP1 = outAngle + (POINT_COUNT - 1) * ANGLE_STEP; 
             
             const norm = (a) => { let res = a % (2 * Math.PI); return res < 0 ? res + 2 * Math.PI : res; };
             const angDiff = (a, b) => { let d = Math.abs(norm(a) - norm(b)); return Math.min(d, 2 * Math.PI - d); };
@@ -348,8 +352,8 @@
             else if (dir === 'CCW') isCw = false;
             else isCw = angDiff(cwP1, arrivalAngle) <= angDiff(ccwP1, arrivalAngle);
 
-            for (let i = 1; i <= 8; i++) {
-                const a = isCw ? (outAngle + (i - 8) * (Math.PI / 4)) : (outAngle - (i - 8) * (Math.PI / 4));
+            for (let i = 1; i <= POINT_COUNT; i++) {
+                const a = isCw ? (outAngle + (i - POINT_COUNT) * ANGLE_STEP) : (outAngle - (i - POINT_COUNT) * ANGLE_STEP);
                 b.push({ x: CONSTANTS.FLW_SAFE_RADIUS_M * Math.sin(a), y: CONSTANTS.FLW_SAFE_RADIUS_M * Math.cos(a) }); 
             }
             const mLon = getLonToMeters(lat);
