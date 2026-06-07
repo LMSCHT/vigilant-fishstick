@@ -13,13 +13,11 @@
   </script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
-  <!-- Leaflet 地圖與繪圖核心套件 -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css" />
   <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
   
-  <!-- S2 Geometry 演算法與依賴 -->
   <script src="https://cdn.jsdelivr.net/npm/long@5.2.3/umd/index.js"></script>
   <script>
       window.require = function(moduleName) {
@@ -182,7 +180,7 @@
       }, []); 
     }
 
-    // --- 【子元件：模式一 精準控花】 (完美保留) ---
+    // --- 【子元件：模式一 精準控花】 ---
     function Mode1({ isDark }) {
       const DIRECTIONS = { 'NW_SE': 'A (左上進)', 'SW_NE': 'B (左下進)', 'NE_SW': 'C (右上進)', 'SE_NW': 'D (右下進)' };
       const ANGLES = [{value:0,label:'0°(直)'},{value:45,label:'45°'},{value:90,label:'90°(橫)'},{value:135,label:'135°'},{value:180,label:'180°'},{value:225,label:'225°'},{value:270,label:'270°'},{value:315,label:'315°'}];
@@ -194,7 +192,8 @@
       const [patternType, setPatternType] = useStickyState('O', 'pikmin_v34_m1_pattern');
       
       const [points, setPoints] = useState([]);
-      const [outputs, setOutputs] = useState({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '' });
+      // 【V36 更新】狀態新增 pureGpx 與 pureCsv
+      const [outputs, setOutputs] = useState({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '', pureGpx: '', pureCsv: '' });
       const [outputTab, setOutputTab] = useState('planting');
       const [outputFormat, setOutputFormat] = useState('gpx'); 
       const [copied, setCopied] = useState(false);
@@ -231,7 +230,7 @@
                 }
               });
               setPoints(calcDirs(newPoints)); 
-              setOutputs({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '' }); 
+              setOutputs({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '', pureGpx: '', pureCsv: '' }); 
               resetZoom();
               
               if (totalCount > 0) {
@@ -409,7 +408,16 @@
             });
             fGpx += `  </trkseg></trk></gpx>`;
 
-            setOutputs({ plantingGpx: pGpx, plantingCsv: pCsv, fruitGpx: fGpx, fruitCsv: fCsv });
+            // 【V36 更新】實裝純花點 (直線連線) 生成邏輯
+            let puGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V36">\n  <trk><name>Pure_Flowers</name><trkseg>\n`;
+            let puCsv = '';
+            points.forEach((pt, idx) => {
+              puGpx += `    <trkpt lat="${pt.lat.toFixed(6)}" lon="${pt.lon.toFixed(6)}"><name>F${idx+1}</name></trkpt>\n`;
+              puCsv += `${pt.lat.toFixed(6)}, ${pt.lon.toFixed(6)}\n`;
+            });
+            puGpx += `  </trkseg></trk></gpx>`;
+
+            setOutputs({ plantingGpx: pGpx, plantingCsv: pCsv, fruitGpx: fGpx, fruitCsv: fCsv, pureGpx: puGpx, pureCsv: puCsv });
           } catch (e) {
             setToastMsg(`生成錯誤：${e.message}`);
             setTimeout(() => setToastMsg(''), 3000);
@@ -515,7 +523,11 @@
 
       useInteractiveMap(svgRef, transformRef, setTransform);
       const resetZoom = () => setTransform({ k: 1, x: 0, y: 0 });
-      const currentOut = outputTab === 'planting' ? (outputFormat === 'gpx' ? outputs.plantingGpx : outputs.plantingCsv) : (outputFormat === 'gpx' ? outputs.fruitGpx : outputs.fruitCsv);
+      
+      // 【V36 更新】根據選擇的分頁，判定 currentOut
+      const currentOut = outputTab === 'pure' ? (outputFormat === 'gpx' ? outputs.pureGpx : outputs.pureCsv) :
+                         outputTab === 'planting' ? (outputFormat === 'gpx' ? outputs.plantingGpx : outputs.plantingCsv) : 
+                         (outputFormat === 'gpx' ? outputs.fruitGpx : outputs.fruitCsv);
       
       const copyGPX = () => { 
         if(!currentOut) return;
@@ -531,7 +543,8 @@
         const ext = outputFormat === 'gpx' ? 'gpx' : 'txt';
         const mime = outputFormat === 'gpx' ? 'text/xml' : 'text/plain';
         const typeName = patternType === 'S' ? 'S' : patternType === 'N' ? 'N' : 'O';
-        const tabName = outputTab === 'planting' ? 'Planting' : 'Fruit';
+        // 【V36 更新】檔案名稱邏輯新增 Pure 判斷
+        const tabName = outputTab === 'pure' ? 'Pure' : outputTab === 'planting' ? 'Planting' : 'Fruit';
         const ts = getTimestamp();
         const filename = `M1_${typeName}_${tabName}_${points.length}F_${ts}.${ext}`;
         
@@ -616,7 +629,9 @@
             <div className="p-3 sm:p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
               <button onClick={generate} disabled={loading} className={`w-full font-bold py-1.5 rounded-lg shadow-sm dark:shadow-lg mb-2 active:scale-95 transition text-xs disabled:opacity-50 ${theme.bg} ${isDark ? (patternType==='O'?'text-white':'text-slate-900') : 'text-white ' + theme.hoverBg}`}><i className="fas fa-play"></i> 產生雙路線</button>
               <div className="flex justify-between items-center mb-1.5 gap-2">
+                 {/* 【V36 更新】輸出標籤擴充為：純花點 / 種植 / 採果 */}
                  <div className="flex rounded p-1 flex-1 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border border-stone-300 dark:border-transparent">
+                   <button onClick={()=>setOutputTab('pure')} className={`flex-1 text-[10px] py-1 rounded font-bold transition ${outputTab==='pure' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>純花點</button>
                    <button onClick={()=>setOutputTab('planting')} className={`flex-1 text-[10px] py-1 rounded font-bold transition ${outputTab==='planting' ? (isDark ? theme.bg + ' ' + (patternType==='O'?'text-white':'text-slate-900') : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>種植</button>
                    <button onClick={()=>setOutputTab('fruit')} className={`flex-1 text-[10px] py-1 rounded font-bold transition ${outputTab==='fruit' ? (isDark ? 'bg-amber-500 text-slate-900' : 'bg-amber-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>採果</button>
                  </div>
@@ -686,7 +701,6 @@
       const mapRef = useRef(null);
       const layerGroupRef = useRef(null);
       
-      // V36: 更新 config 屬性，包含新的降維定義與層數 (layers)
       const [config, setConfig] = useStickyState({ startCoord: '', width: '1.5', rows: '20', axis: 'LINE', sweepDir: 'R', advDir: 'F', speedKmH: 18, angle: 0, layers: 1 }, 'pikmin_v36_m2_config');
       const configRef = useRef(config);
       useEffect(() => { configRef.current = config; }, [config]);
@@ -723,8 +737,9 @@
             const dLonRatio = getLonToMeters(lat);
 
             if (axis === 'CIRCLE') {
-                // 【同心圓麥田圈模式】
-                pts.push({ lat: lat, lon: lon, name: 'Center' }); // 新增：強制將圓心作為第一個座標點
+                // 【同心圓麥田圈模式 - 完美補上紅點邏輯】
+                pts.push({ lat: lat, lon: lon, name: 'Center' }); // 第一個點：強制加入圓心
+
                 const layersCount = parseInt(layers, 10) || 1;
                 for (let l = 0; l < layersCount; l++) {
                     const rMeters = 20 + l * 35; // R1=20m, 每次外推35m
@@ -741,12 +756,11 @@
                             name: `C${l+1}_P${i}` 
                         });
                     }
-                    // 迴圈自動跳至下一個圈的 i=0 (同角度，半徑變大)，完美在兩圈之間拉出一條 35m 切換通道！
                 }
             } else {
                 // 【單向平行 / 矩陣棋盤模式】
                 const w = parseFloat(wStr); const r = parseInt(rStr, 10);
-              if (isNaN(w) || isNaN(r)) { setLoading(false); return; }
+                if (isNaN(w) || isNaN(r)) { setLoading(false); return; }
                 
                 const wMeters = w * 1000;
                 const dirX = sweepDir === 'R' ? 1 : -1; // R: 向右(正), L: 向左(負)
@@ -840,12 +854,15 @@
         if (generatedPts.length > 0) {
            const latlngs = generatedPts.map(p => [p.lat, p.lon]);
            const pathColor = isDark ? '#3b82f6' : '#2563eb';
+           const isCircle = configRef.current.axis === 'CIRCLE';
            
            L.polyline(latlngs, {
-             color: pathColor, weight: 3, opacity: 0.8, dashArray: configRef.current.axis === 'CIRCLE' ? 'none' : '8, 8'
+             color: pathColor, weight: 3, opacity: 0.8, dashArray: isCircle ? 'none' : '8, 8'
            }).addTo(group);
 
+           // 統一使用綠色為起點，紅色為終點，保持全模式視覺一致性
            L.circleMarker(latlngs[0], { radius: 6, color: '#16a34a', fillColor: '#16a34a', fillOpacity: 1 }).bindPopup("起點").addTo(group);
+           
            L.circleMarker(latlngs[latlngs.length - 1], { radius: 6, color: '#dc2626', fillColor: '#dc2626', fillOpacity: 1 }).bindPopup("終點").addTo(group);
         }
       }, [generatedPts, isDark]);
@@ -939,14 +956,12 @@
 
               <input type="text" className={`w-full border rounded p-1.5 text-xs outline-none mb-3 focus:outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} value={config.startCoord} onChange={(e)=>setConfig({...config, startCoord: e.target.value})} placeholder="請輸入起點座標..." />
               
-              {/* 【V36 更新】簡化路徑選擇器 */}
               <div className="flex rounded border overflow-hidden mb-3 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600 shadow-none dark:shadow-inner">
                 <button onClick={()=>{const n={...config, axis:'LINE'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-1.5 text-[10px] font-bold transition-colors ${config.axis==='LINE' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-stone-500 hover:text-stone-700')}`}>單向平行</button>
                 <button onClick={()=>{const n={...config, axis:'GRID'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-1.5 text-[10px] font-bold transition-colors ${config.axis==='GRID' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-stone-500 hover:text-stone-700')}`}>矩陣棋盤</button>
                 <button onClick={()=>{const n={...config, axis:'CIRCLE'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-1.5 text-[10px] font-bold transition-colors ${config.axis==='CIRCLE' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-stone-500 hover:text-stone-700')}`}>同心圓</button>
               </div>
 
-              {/* 【V36 更新】根據選擇的路徑類型顯示參數 */}
               <div className={`grid ${config.axis === 'CIRCLE' ? 'grid-cols-2' : 'grid-cols-3'} gap-2 mb-3`}>
                 {config.axis !== 'CIRCLE' && (
                   <>
@@ -971,7 +986,6 @@
                 <input type="range" min="0" max="359" className="w-full h-1.5 bg-stone-300 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600 hover:accent-blue-500 transition-colors duration-300" value={config.angle || 0} onChange={(e)=>{const n={...config, angle: parseInt(e.target.value)||0}; setConfig(n); generateGrid(n, false);}} />
               </div>
 
-              {/* 【V36 更新】同心圓模式不需要方向，自動隱藏 */}
               {config.axis !== 'CIRCLE' && (
                 <div className="grid grid-cols-2 gap-2 mb-4">
                   <select className={`w-full border rounded p-1.5 text-[10px] sm:text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white shadow-inner focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.sweepDir} onChange={(e)=>{const n={...config, sweepDir: e.target.value}; setConfig(n); generateGrid(n, false);}}>
@@ -1354,7 +1368,7 @@
                 <i className={`fab fa-neos text-2xl ${isDark ? 'text-emerald-400' : 'text-stone-800'}`}></i>
                 <div>
                   <h1 className={`text-base font-black tracking-wider uppercase ${isDark ? 'text-white' : 'text-stone-800'}`}>PIKMIN NAVIGATOR</h1>
-                  <p className="text-[9px] tracking-widest flex items-center gap-1 text-stone-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V36<span className="border px-1 rounded-sm text-[8px] font-bold shadow-sm transition-colors duration-300 bg-stone-200 dark:bg-purple-500 text-stone-700 dark:text-white border-stone-300 dark:border-transparent">一直在改版</span></p>
+                  <p className="text-[9px] tracking-widest flex items-center gap-1 text-stone-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V36<span className="border px-1 rounded-sm text-[8px] font-bold shadow-sm transition-colors duration-300 bg-stone-200 dark:bg-blue-500 text-stone-700 dark:text-white border-stone-300 dark:border-transparent">一直在改版</span></p>
                 </div>
               </div>
               <div className="flex rounded-lg p-1 border w-full sm:w-auto mt-2 sm:mt-0 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700 overflow-x-auto custom-scrollbar">
