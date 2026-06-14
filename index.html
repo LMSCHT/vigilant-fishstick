@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -58,9 +59,9 @@
 
     const CONSTANTS = {
       LAT_TO_M: 111132,             
-      FLW_SAFE_RADIUS_M: 25,        // 模式一完美八邊形半徑
-      FLW_MAX_RADIUS_M: 40,         // 大花極限半徑
-      S2_SPACING_KM: 0.0778,        // 掃蕩黃金間距
+      FLW_SAFE_RADIUS_M: 25,        // 【實戰修正】從 20 改為 25，外擴極致貼邊 40m
+      FLW_MAX_RADIUS_M: 40,         
+      S2_SPACING_KM: 0.0778,        
       MIN_LAT: -90, MAX_LAT: 90,    
       MIN_LON: -180, MAX_LON: 180   
     };
@@ -192,7 +193,7 @@
       const [patternType, setPatternType] = useStickyState('O', 'pikmin_v34_m1_pattern');
       
       const [points, setPoints] = useState([]);
-      // 【V36 更新】狀態新增 pureGpx 與 pureCsv
+      // 新增 pureGpx 與 pureCsv 狀態
       const [outputs, setOutputs] = useState({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '', pureGpx: '', pureCsv: '' });
       const [outputTab, setOutputTab] = useState('planting');
       const [outputFormat, setOutputFormat] = useState('gpx'); 
@@ -337,7 +338,7 @@
             outAngle += (angle * Math.PI) / 180;
             const arrivalAngle = inAngle + Math.PI; 
             
-            // 【V36 實戰修正】將 8 邊形暴力升級為 32 邊形平滑真圓
+            // 【實戰修正】將 8 邊形暴力升級為 32 邊形平滑真圓
             const POINT_COUNT = 32;
             const ANGLE_STEP = (2 * Math.PI) / POINT_COUNT;
             
@@ -412,7 +413,7 @@
             });
             fGpx += `  </trkseg></trk></gpx>`;
 
-            // 【V36 更新】實裝純花點 (直線連線) 生成邏輯
+            // 【實裝】純花點 (直線連線) 生成邏輯
             let puGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V36">\n  <trk><name>Pure_Flowers</name><trkseg>\n`;
             let puCsv = '';
             points.forEach((pt, idx) => {
@@ -528,7 +529,6 @@
       useInteractiveMap(svgRef, transformRef, setTransform);
       const resetZoom = () => setTransform({ k: 1, x: 0, y: 0 });
       
-      // 【V36 更新】根據選擇的分頁，判定 currentOut
       const currentOut = outputTab === 'pure' ? (outputFormat === 'gpx' ? outputs.pureGpx : outputs.pureCsv) :
                          outputTab === 'planting' ? (outputFormat === 'gpx' ? outputs.plantingGpx : outputs.plantingCsv) : 
                          (outputFormat === 'gpx' ? outputs.fruitGpx : outputs.fruitCsv);
@@ -547,7 +547,6 @@
         const ext = outputFormat === 'gpx' ? 'gpx' : 'txt';
         const mime = outputFormat === 'gpx' ? 'text/xml' : 'text/plain';
         const typeName = patternType === 'S' ? 'S' : patternType === 'N' ? 'N' : 'O';
-        // 【V36 更新】檔案名稱邏輯新增 Pure 判斷
         const tabName = outputTab === 'pure' ? 'Pure' : outputTab === 'planting' ? 'Planting' : 'Fruit';
         const ts = getTimestamp();
         const filename = `M1_${typeName}_${tabName}_${points.length}F_${ts}.${ext}`;
@@ -571,58 +570,58 @@
           {loading && (
             <div className={`absolute inset-0 z-[1000] rounded-xl flex items-center justify-center backdrop-blur-sm transition-colors duration-300 ${isDark ? 'bg-slate-900/40' : 'bg-stone-200/60'}`}>
               <i className={`fas fa-spinner fa-spin text-3xl ${theme.icon}`}></i>
-              <span className={`ml-3 ${theme.text} font-bold tracking-widest`}>AI 運算中...</span>
+              <span className={`ml-3 ${theme.text} text-sm font-bold tracking-widest`}>AI 運算中...</span>
             </div>
           )}
           {toastMsg && <div className={`absolute top-4 left-1/2 transform -translate-x-1/2 ${theme.toastBg} text-white px-6 py-3 rounded-full z-[1000] animate-bounce flex items-center gap-2 font-bold text-sm shadow-md dark:shadow-lg transition-colors duration-300`}><i className="fas fa-info-circle"></i>{toastMsg}</div>}
           {diagnosticMsg && <div className={`absolute top-16 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full z-[1000] flex items-center gap-2 font-bold text-sm shadow-md dark:shadow-xl transition-colors duration-300 ${diagnosticMsg.type === 'warning' ? (isDark ? 'bg-rose-600 text-white' : 'bg-rose-100 text-rose-800 border border-rose-300') : (isDark ? 'bg-emerald-600 text-white' : 'bg-emerald-100 text-emerald-800 border border-emerald-300')}`}><i className={`fas ${diagnosticMsg.type === 'warning' ? 'fa-exclamation-triangle' : 'fa-check-circle'}`}></i>{diagnosticMsg.text}</div>}
 
-          <div className="lg:col-span-4 flex flex-col gap-3 h-[550px] sm:h-[600px] lg:h-full min-h-0 z-20">
-            <div className="p-3 sm:p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <div className="flex justify-between items-center mb-2">
-                <h2 className={`text-xs sm:text-sm font-bold flex items-center gap-2 ${isDark ? theme.text : 'text-stone-800'}`}><i className="fas fa-list-ol"></i> 1. 貼上座標</h2>
+          <div className="lg:col-span-4 flex flex-col gap-4 min-h-[600px] h-[65vh] lg:h-full z-20">
+            <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
+              <div className="flex justify-between items-center mb-3">
+                <h2 className={`text-sm sm:text-base font-bold flex items-center gap-2 ${isDark ? theme.text : 'text-stone-800'}`}><i className="fas fa-list-ol"></i> 1. 貼上座標</h2>
                 <div className="flex rounded border overflow-hidden transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600">
-                  <button onClick={() => setPatternType('S')} className={`px-2 py-1 text-[9px] font-bold transition-colors ${patternType==='S' ? (isDark ? 'bg-emerald-500 text-slate-900' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-emerald-400' : 'text-stone-500 hover:text-stone-700')}`}>常規 S型</button>
-                  <button onClick={() => setPatternType('N')} className={`px-2 py-1 text-[9px] font-bold transition-colors ${patternType==='N' ? (isDark ? 'bg-amber-500 text-slate-900' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-amber-400' : 'text-stone-500 hover:text-stone-700')}`}>稀有 N型</button>
-                  <button onClick={() => setPatternType('O')} className={`px-2 py-1 text-[9px] font-bold transition-colors ${patternType==='O' ? (isDark ? 'bg-purple-500 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-purple-400' : 'text-stone-500 hover:text-stone-700')}`}>圓舞 O型</button>
+                  <button onClick={() => setPatternType('S')} className={`px-3 py-1.5 text-xs font-bold transition-colors ${patternType==='S' ? (isDark ? 'bg-emerald-500 text-slate-900' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-emerald-400' : 'text-stone-500 hover:text-stone-700')}`}>常規 S型</button>
+                  <button onClick={() => setPatternType('N')} className={`px-3 py-1.5 text-xs font-bold transition-colors ${patternType==='N' ? (isDark ? 'bg-amber-500 text-slate-900' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-amber-400' : 'text-stone-500 hover:text-stone-700')}`}>稀有 N型</button>
+                  <button onClick={() => setPatternType('O')} className={`px-3 py-1.5 text-xs font-bold transition-colors ${patternType==='O' ? (isDark ? 'bg-purple-500 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-purple-400' : 'text-stone-500 hover:text-stone-700')}`}>圓舞 O型</button>
                 </div>
               </div>
-              <textarea className={`w-full h-12 p-2 border rounded font-mono text-[10px] custom-scrollbar focus:outline-none transition-colors duration-300 ${isDark ? `bg-slate-900 border-slate-600 focus:${theme.border} text-slate-200` : `bg-stone-200 border-stone-300 ${theme.ring} text-stone-800 focus:bg-stone-100`}`} value={rawInput} onChange={(e)=>setRawInput(e.target.value)} placeholder="請輸入座標..."></textarea>
-              <button onClick={handleParse} disabled={loading} className={`mt-2 w-full text-white py-1.5 rounded font-bold text-xs shadow-sm dark:shadow-lg transition-colors duration-300 disabled:opacity-50 ${theme.bg} ${theme.hoverBg}`}><i className="fas fa-magic"></i> 解析座標</button>
+              <textarea className={`w-full h-20 p-3 border rounded font-mono text-sm custom-scrollbar focus:outline-none transition-colors duration-300 ${isDark ? `bg-slate-900 border-slate-600 focus:${theme.border} text-slate-200` : `bg-stone-200 border-stone-300 ${theme.ring} text-stone-800 focus:bg-stone-100`}`} value={rawInput} onChange={(e)=>setRawInput(e.target.value)} placeholder="請輸入座標..."></textarea>
+              <button onClick={handleParse} disabled={loading} className={`mt-3 w-full text-white py-2 rounded font-bold text-sm shadow-sm dark:shadow-lg transition-colors duration-300 disabled:opacity-50 ${theme.bg} ${theme.hoverBg}`}><i className="fas fa-magic"></i> 解析座標</button>
             </div>
             
-            <div className="p-2 sm:p-3 rounded-xl border flex items-center justify-between shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-md">
-               <div className="flex items-center gap-2"><i className="fas fa-tachometer-alt text-stone-500 dark:text-blue-400 text-sm"></i><input type="number" className="w-10 border rounded text-center text-xs outline-none transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600 text-stone-800 dark:text-white focus:border-stone-400 dark:focus:border-slate-500 focus:bg-stone-100 dark:focus:bg-slate-900" value={speedKmH} onChange={(e)=>setSpeedKmH(parseFloat(e.target.value)||1)} /><span className="text-[9px] text-stone-500">km/h</span></div>
+            <div className="p-3 sm:p-4 rounded-xl border flex items-center justify-between shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-md">
+               <div className="flex items-center gap-2"><i className="fas fa-tachometer-alt text-stone-500 dark:text-blue-400 text-base"></i><input type="number" className="w-12 border rounded text-center text-sm p-1 outline-none transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600 text-stone-800 dark:text-white focus:border-stone-400 dark:focus:border-slate-500 focus:bg-stone-100 dark:focus:bg-slate-900" value={speedKmH} onChange={(e)=>setSpeedKmH(parseFloat(e.target.value)||1)} /><span className="text-xs text-stone-500">km/h</span></div>
                <div className="flex gap-4">
-                 <div className="text-right"><span className="text-[9px] text-stone-500 dark:text-slate-400 block">路程</span><span className={`font-bold text-xs ${isDark ? theme.text : 'text-stone-800'}`}>{stats.distKm} km</span></div>
-                 <div className="text-right"><span className="text-[9px] text-stone-500 dark:text-slate-400 block">預估</span><span className={`font-bold text-xs ${isDark ? theme.text : 'text-stone-800'}`}>{stats.timeMin} min</span></div>
+                 <div className="text-right"><span className="text-xs text-stone-500 dark:text-slate-400 block">路程</span><span className={`font-bold text-sm ${isDark ? theme.text : 'text-stone-800'}`}>{stats.distKm} km</span></div>
+                 <div className="text-right"><span className="text-xs text-stone-500 dark:text-slate-400 block">預估</span><span className={`font-bold text-sm ${isDark ? theme.text : 'text-stone-800'}`}>{stats.timeMin} min</span></div>
                </div>
             </div>
 
-            <div className="flex-1 p-3 sm:p-4 rounded-xl border flex flex-col min-h-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <div className="flex justify-between items-center mb-2 pb-2 border-b shrink-0 transition-colors duration-300 border-stone-300 dark:border-slate-700">
-                <h2 className={`text-xs sm:text-sm font-bold flex items-center gap-2 ${isDark ? theme.text : 'text-stone-800'}`}><i className="fas fa-sliders-h"></i> 2. 序列微調</h2>
+            <div className="flex-1 p-4 rounded-xl border flex flex-col min-h-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
+              <div className="flex justify-between items-center mb-3 pb-3 border-b shrink-0 transition-colors duration-300 border-stone-300 dark:border-slate-700">
+                <h2 className={`text-sm sm:text-base font-bold flex items-center gap-2 ${isDark ? theme.text : 'text-stone-800'}`}><i className="fas fa-sliders-h"></i> 2. 序列微調</h2>
                 <div className="flex gap-2">
-                    <button onClick={handleDiagnostic} disabled={loading} className="px-2 py-1 rounded text-[10px] font-bold transition active:scale-95 disabled:opacity-50 border bg-stone-200 dark:bg-rose-500/20 text-stone-600 dark:text-rose-400 hover:bg-stone-300 dark:hover:bg-rose-500/40 border-stone-300 dark:border-transparent"><i className="fas fa-brain"></i> 智慧診斷</button>
-                    <button onClick={handleOptimize} disabled={loading} className="px-2 py-1 rounded text-[10px] font-bold transition active:scale-95 flex items-center gap-1 disabled:opacity-50 border bg-stone-200 dark:bg-blue-500/20 text-stone-600 dark:text-blue-400 hover:bg-stone-300 dark:hover:bg-blue-500/40 border-stone-300 dark:border-transparent"><i className="fas fa-bolt"></i> TSP排序</button>
+                    <button onClick={handleDiagnostic} disabled={loading} className="px-3 py-1.5 rounded text-xs font-bold transition active:scale-95 disabled:opacity-50 border bg-stone-200 dark:bg-rose-500/20 text-stone-600 dark:text-rose-400 hover:bg-stone-300 dark:hover:bg-rose-500/40 border-stone-300 dark:border-transparent"><i className="fas fa-brain"></i> 智慧診斷</button>
+                    <button onClick={handleOptimize} disabled={loading} className="px-3 py-1.5 rounded text-xs font-bold transition active:scale-95 flex items-center gap-1 disabled:opacity-50 border bg-stone-200 dark:bg-blue-500/20 text-stone-600 dark:text-blue-400 hover:bg-stone-300 dark:hover:bg-blue-500/40 border-stone-300 dark:border-transparent"><i className="fas fa-bolt"></i> TSP排序</button>
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar min-h-0">
+              <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar min-h-0">
                 {points.map((pt, i) => {
                   const safeDir = patternType === 'O' ? (['AUTO', 'CW', 'CCW'].includes(pt.dir) ? pt.dir : 'AUTO') : (['NW_SE', 'SW_NE', 'NE_SW', 'SE_NW'].includes(pt.dir) ? pt.dir : 'NW_SE');
                   return (
-                    <div key={pt.id} className="px-1.5 py-1 rounded-md text-xs border flex items-center gap-1 transition-all bg-stone-200 dark:bg-slate-700 border-stone-300 dark:border-slate-600 hover:border-emerald-400 dark:hover:border-emerald-400">
-                      <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${theme.badgeBg} ${theme.badgeText}`}>{i+1}</span>
-                      <select className={`border rounded py-0.5 px-1 text-[10px] flex-[2] min-w-0 truncate focus:outline-none transition-colors duration-300 bg-stone-100 dark:bg-slate-900 border-stone-300 dark:border-transparent text-stone-800 dark:text-slate-200 ${isDark ? theme.ring : 'focus:ring-emerald-500'}`} value={safeDir} onChange={(e)=>updatePoint(i,'dir',e.target.value)}>
+                    <div key={pt.id} className="px-2 py-1.5 rounded-md text-sm border flex items-center gap-2 transition-all bg-stone-200 dark:bg-slate-700 border-stone-300 dark:border-slate-600 hover:border-emerald-400 dark:hover:border-emerald-400">
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${theme.badgeBg} ${theme.badgeText}`}>{i+1}</span>
+                      <select className={`border rounded py-1 px-2 text-sm flex-[2] min-w-0 truncate focus:outline-none transition-colors duration-300 bg-stone-100 dark:bg-slate-900 border-stone-300 dark:border-transparent text-stone-800 dark:text-slate-200 ${isDark ? theme.ring : 'focus:ring-emerald-500'}`} value={safeDir} onChange={(e)=>updatePoint(i,'dir',e.target.value)}>
                         {patternType==='O'?Object.entries(O_DIRECTIONS).map(([k,v])=><option key={k} value={k} className="bg-stone-100 dark:bg-slate-800 text-stone-800 dark:text-slate-200">{v}</option>):Object.entries(DIRECTIONS).map(([k,v])=><option key={k} value={k} className="bg-stone-100 dark:bg-slate-800 text-stone-800 dark:text-slate-200">{v}</option>)}
                       </select>
-                      <select className={`border rounded py-0.5 px-1 text-[10px] flex-1 min-w-0 truncate focus:outline-none transition-colors duration-300 ${isDark ? theme.bgSubtle + ' border-transparent ' + theme.text + ' ' + theme.ring : 'bg-stone-100 border-stone-300 text-stone-800 focus:ring-emerald-500'}`} value={pt.angle||0} onChange={(e)=>updatePoint(i,'angle',parseInt(e.target.value))}>
+                      <select className={`border rounded py-1 px-2 text-sm flex-1 min-w-0 truncate focus:outline-none transition-colors duration-300 ${isDark ? theme.bgSubtle + ' border-transparent ' + theme.text + ' ' + theme.ring : 'bg-stone-100 border-stone-300 text-stone-800 focus:ring-emerald-500'}`} value={pt.angle||0} onChange={(e)=>updatePoint(i,'angle',parseInt(e.target.value))}>
                         {patternType==='O'?O_ANGLES.map(a=><option key={a.value} value={a.value} className="bg-stone-100 dark:bg-slate-800 text-stone-800 dark:text-white">{a.label}</option>):ANGLES.map(a=><option key={a.value} value={a.value} className="bg-stone-100 dark:bg-slate-800 text-stone-800 dark:text-white">{a.label}</option>)}
                       </select>
-                      <div className="flex gap-0.5 shrink-0 bg-stone-100 dark:bg-transparent border border-stone-300 dark:border-transparent rounded transition-colors duration-300">
-                        <button onClick={()=>movePoint(i,-1)} disabled={i===0} className="p-1 text-stone-500 hover:text-stone-700 dark:hover:text-emerald-400 disabled:opacity-20"><i className="fas fa-arrow-up text-[10px]"></i></button>
-                        <button onClick={()=>movePoint(i,1)} disabled={i===points.length-1} className="p-1 text-stone-500 hover:text-stone-700 dark:hover:text-emerald-400 disabled:opacity-20"><i className="fas fa-arrow-down text-[10px]"></i></button>
-                        <button onClick={()=>deletePoint(i)} className="p-1 text-stone-500 hover:text-rose-500 dark:hover:text-red-400"><i className="fas fa-trash text-[10px]"></i></button>
+                      <div className="flex gap-1 shrink-0 bg-stone-100 dark:bg-transparent border border-stone-300 dark:border-transparent rounded transition-colors duration-300">
+                        <button onClick={()=>movePoint(i,-1)} disabled={i===0} className="p-1.5 text-stone-500 hover:text-stone-700 dark:hover:text-emerald-400 disabled:opacity-20"><i className="fas fa-arrow-up text-sm"></i></button>
+                        <button onClick={()=>movePoint(i,1)} disabled={i===points.length-1} className="p-1.5 text-stone-500 hover:text-stone-700 dark:hover:text-emerald-400 disabled:opacity-20"><i className="fas fa-arrow-down text-sm"></i></button>
+                        <button onClick={()=>deletePoint(i)} className="p-1.5 text-stone-500 hover:text-rose-500 dark:hover:text-red-400"><i className="fas fa-trash text-sm"></i></button>
                       </div>
                     </div>
                   );
@@ -630,31 +629,30 @@
               </div>
             </div>
 
-            <div className="p-3 sm:p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <button onClick={generate} disabled={loading} className={`w-full font-bold py-1.5 rounded-lg shadow-sm dark:shadow-lg mb-2 active:scale-95 transition text-xs disabled:opacity-50 ${theme.bg} ${isDark ? (patternType==='O'?'text-white':'text-slate-900') : 'text-white ' + theme.hoverBg}`}><i className="fas fa-play"></i> 產生雙路線</button>
-              <div className="flex justify-between items-center mb-1.5 gap-2">
-                 {/* 【V36 更新】輸出標籤擴充為：純花點 / 種植 / 採果 */}
+            <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
+              <button onClick={generate} disabled={loading} className={`w-full font-bold py-2.5 rounded-lg shadow-sm dark:shadow-lg mb-3 active:scale-95 transition text-sm disabled:opacity-50 ${theme.bg} ${isDark ? (patternType==='O'?'text-white':'text-slate-900') : 'text-white ' + theme.hoverBg}`}><i className="fas fa-play"></i> 產生雙路線</button>
+              <div className="flex justify-between items-center mb-2 gap-3">
                  <div className="flex rounded p-1 flex-1 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border border-stone-300 dark:border-transparent">
-                   <button onClick={()=>setOutputTab('pure')} className={`flex-1 text-[10px] py-1 rounded font-bold transition ${outputTab==='pure' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>純花點</button>
-                   <button onClick={()=>setOutputTab('planting')} className={`flex-1 text-[10px] py-1 rounded font-bold transition ${outputTab==='planting' ? (isDark ? theme.bg + ' ' + (patternType==='O'?'text-white':'text-slate-900') : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>種植</button>
-                   <button onClick={()=>setOutputTab('fruit')} className={`flex-1 text-[10px] py-1 rounded font-bold transition ${outputTab==='fruit' ? (isDark ? 'bg-amber-500 text-slate-900' : 'bg-amber-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>採果</button>
+                   <button onClick={()=>setOutputTab('pure')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='pure' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>純花點</button>
+                   <button onClick={()=>setOutputTab('planting')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='planting' ? (isDark ? theme.bg + ' ' + (patternType==='O'?'text-white':'text-slate-900') : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>種植</button>
+                   <button onClick={()=>setOutputTab('fruit')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='fruit' ? (isDark ? 'bg-amber-500 text-slate-900' : 'bg-amber-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>採果</button>
                  </div>
                  <div className="flex rounded border overflow-hidden shrink-0 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600 shadow-none dark:shadow-inner">
-                    <button onClick={()=>setOutputFormat('gpx')} className={`px-2 py-1 text-[9px] transition ${outputFormat==='gpx' ? (isDark ? 'bg-slate-600 text-white' : 'bg-stone-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
-                    <button onClick={()=>setOutputFormat('csv')} className={`px-2 py-1 text-[9px] transition ${outputFormat==='csv' ? (isDark ? 'bg-slate-600 text-white' : 'bg-stone-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>座標</button>
+                    <button onClick={()=>setOutputFormat('gpx')} className={`px-3 py-1.5 text-xs transition ${outputFormat==='gpx' ? (isDark ? 'bg-slate-600 text-white' : 'bg-stone-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
+                    <button onClick={()=>setOutputFormat('csv')} className={`px-3 py-1.5 text-xs transition ${outputFormat==='csv' ? (isDark ? 'bg-slate-600 text-white' : 'bg-stone-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>座標</button>
                  </div>
               </div>
-              <div className="relative h-16 rounded border shadow-inner transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700">
-                <textarea className={`w-full h-full bg-transparent text-[9px] p-2 custom-scrollbar outline-none ${theme.outputText}`} readOnly value={currentOut} placeholder="等待生成..."></textarea>
-                {currentOut && <div className="absolute bottom-1 right-1 flex gap-1"><button onClick={copyGPX} className="p-1 rounded active:scale-95 transition bg-stone-100 dark:bg-slate-700 border border-stone-300 dark:border-transparent text-stone-600 dark:text-white hover:bg-stone-200 dark:hover:bg-slate-600"><i className={`fas ${copied?`fa-check ${isDark ? theme.text : 'text-emerald-600'}`:`fa-copy ${isDark ? 'text-white' : 'text-stone-600'}`} text-[10px]`}></i></button><button onClick={dlGPX} className={`text-white px-2 rounded text-[10px] font-bold active:scale-95 transition shadow-sm ${theme.bg} ${isDark ? '' : theme.hoverBg}`}><i className="fas fa-download"></i></button></div>}
+              <div className="relative h-24 rounded border shadow-inner transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700">
+                <textarea className={`w-full h-full bg-transparent text-xs p-3 custom-scrollbar outline-none font-mono ${theme.outputText}`} readOnly value={currentOut} placeholder="等待生成..."></textarea>
+                {currentOut && <div className="absolute bottom-2 right-2 flex gap-1.5"><button onClick={copyGPX} className="p-1.5 rounded active:scale-95 transition bg-stone-100 dark:bg-slate-700 border border-stone-300 dark:border-transparent text-stone-600 dark:text-white hover:bg-stone-200 dark:hover:bg-slate-600"><i className={`fas ${copied?`fa-check ${isDark ? theme.text : 'text-emerald-600'}`:`fa-copy ${isDark ? 'text-white' : 'text-stone-600'}`} text-sm`}></i></button><button onClick={dlGPX} className={`text-white px-3 py-1.5 rounded text-sm font-bold active:scale-95 transition shadow-sm ${theme.bg} ${isDark ? '' : theme.hoverBg}`}><i className="fas fa-download"></i></button></div>}
               </div>
             </div>
           </div>
 
           <div className="lg:col-span-8 rounded-xl border relative overflow-hidden min-h-[50vh] lg:h-full flex flex-col pb-4 transition-colors duration-300 bg-stone-100 dark:bg-slate-800/50 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-2xl z-10">
-            <div className="absolute top-2 left-2 z-10 flex gap-2 pointer-events-none w-full pr-4">
-              <span className={`px-2 py-1.5 rounded text-[10px] border shadow-sm dark:shadow-md pointer-events-auto backdrop-blur flex items-center gap-1 font-bold transition-colors duration-300 bg-stone-100/90 dark:bg-slate-900/90 border-stone-300 dark:border-slate-700 text-stone-800 dark:text-white`}><i className={`fas fa-${patternType==='O'?'sync text-purple-600':patternType==='S'?'leaf text-emerald-600':'bolt text-amber-600'} ${isDark ? theme.icon : ''}`}></i><span className="hidden sm:inline">{patternType==='O'?'圓舞':patternType==='S'?'種花':'稀有'}</span></span>
-              <button onClick={resetZoom} className="border px-2 py-1.5 rounded text-[10px] pointer-events-auto ml-auto transition active:scale-95 flex items-center gap-1 shadow-sm font-semibold duration-300 bg-stone-200 dark:bg-slate-700/90 border-stone-300 dark:border-slate-600 hover:bg-stone-300 dark:hover:bg-slate-600 text-stone-700 dark:text-white"><i className="fas fa-crosshairs"></i> 置中</button>
+            <div className="absolute top-3 left-3 z-10 flex gap-2 pointer-events-none w-full pr-6">
+              <span className={`px-3 py-2 rounded-lg text-xs border shadow-sm dark:shadow-md pointer-events-auto backdrop-blur flex items-center gap-1.5 font-bold transition-colors duration-300 bg-stone-100/90 dark:bg-slate-900/90 border-stone-300 dark:border-slate-700 text-stone-800 dark:text-white`}><i className={`fas fa-${patternType==='O'?'sync text-purple-600':patternType==='S'?'leaf text-emerald-600':'bolt text-amber-600'} ${isDark ? theme.icon : ''}`}></i><span className="hidden sm:inline">{patternType==='O'?'圓舞':patternType==='S'?'種花':'稀有'}</span></span>
+              <button onClick={resetZoom} className="border px-3 py-2 rounded-lg text-xs pointer-events-auto ml-auto transition active:scale-95 flex items-center gap-1.5 shadow-sm font-semibold duration-300 bg-stone-200 dark:bg-slate-700/90 border-stone-300 dark:border-slate-600 hover:bg-stone-300 dark:hover:bg-slate-600 text-stone-700 dark:text-white"><i className="fas fa-crosshairs"></i> 置中</button>
             </div>
             
             <svg ref={svgRef} className="svg-container w-full h-full flex-1 transition-colors duration-300 bg-[#e7e5e4] dark:bg-transparent" viewBox="0 0 2000 2000">
@@ -694,13 +692,13 @@
                 </g>
               )}
             </svg>
-            {!vData && <div className={`absolute inset-0 flex items-center justify-center text-sm font-bold tracking-widest transition-colors duration-300 text-stone-500 dark:text-slate-500`}><i className={`fas fa-satellite mr-2 animate-pulse ${isDark ? '' : 'text-blue-500'}`}></i>待命狀態：請載入座標...</div>}
+            {!vData && <div className={`absolute inset-0 flex items-center justify-center text-base font-bold tracking-widest transition-colors duration-300 text-stone-500 dark:text-slate-500`}><i className={`fas fa-satellite mr-2 animate-pulse ${isDark ? '' : 'text-blue-500'}`}></i>待命狀態：請載入座標...</div>}
           </div>
         </div>
       );
     }
 
-    // --- 【子元件：模式二 幾何盲掃矩陣 (V36 降維重構 + 同心圓麥田圈實裝)】 ---
+    // --- 【子元件：模式二 幾何盲掃矩陣】 ---
     function Mode2({ isDark }) {
       const mapRef = useRef(null);
       const layerGroupRef = useRef(null);
@@ -734,20 +732,17 @@
             const speed = parseFloat(speedKmH) || 18;
             let pts = [];
 
-            // 旋轉矩陣閉包
             const rad = -(angle || 0) * Math.PI / 180; 
             const cosA = Math.cos(rad); const sinA = Math.sin(rad);
             const rot = (x, y) => ({ x: x*cosA - y*sinA, y: x*sinA + y*cosA });
             const dLonRatio = getLonToMeters(lat);
 
             if (axis === 'CIRCLE') {
-                // 【同心圓麥田圈模式 - 完美補上紅點邏輯】
-                pts.push({ lat: lat, lon: lon, name: 'Center' }); // 第一個點：強制加入圓心
-
+                pts.push({ lat: lat, lon: lon, name: 'Center' }); 
                 const layersCount = parseInt(layers, 10) || 1;
                 for (let l = 0; l < layersCount; l++) {
-                    const rMeters = 20 + l * 35; // R1=20m, 每次外推35m
-                    const segments = 36; // 每個圓拆成36點 (每10度一個點，模擬極度平滑)
+                    const rMeters = 20 + l * 35; 
+                    const segments = 36; 
                     for (let i = 0; i <= segments; i++) {
                         const theta = (i / segments) * 2 * Math.PI;
                         const x = rMeters * Math.sin(theta);
@@ -762,17 +757,15 @@
                     }
                 }
             } else {
-                // 【單向平行 / 矩陣棋盤模式】
                 const w = parseFloat(wStr); const r = parseInt(rStr, 10);
                 if (isNaN(w) || isNaN(r)) { setLoading(false); return; }
                 
                 const wMeters = w * 1000;
-                const dirX = sweepDir === 'R' ? 1 : -1; // R: 向右(正), L: 向左(負)
-                const dirY = advDir === 'F' ? 1 : -1;   // F: 向前(正), B: 向後(負)
+                const dirX = sweepDir === 'R' ? 1 : -1; 
+                const dirY = advDir === 'F' ? 1 : -1;   
                 
                 let localPts = [];
 
-                // 生成平行線
                 for (let i = 0; i < r; i++) {
                     let y = i * CONSTANTS.S2_SPACING_KM * 1000 * dirY;
                     let xStart = i % 2 === 0 ? 0 : wMeters * dirX;
@@ -780,7 +773,6 @@
                     localPts.push({x: xStart, y: y, n: `L${i+1}_1`}, {x: xEnd, y: y, n: `L${i+1}_2`});
                 }
 
-                // 如果是矩陣棋盤，疊加垂直線
                 if (axis === 'GRID') {
                     const cols = Math.ceil(wMeters / (CONSTANTS.S2_SPACING_KM * 1000)) + 1;
                     const hMaxY = (r - 1) * CONSTANTS.S2_SPACING_KM * 1000 * dirY;
@@ -864,8 +856,13 @@
              color: pathColor, weight: 3, opacity: 0.8, dashArray: isCircle ? 'none' : '8, 8'
            }).addTo(group);
 
-           // 統一使用綠色為起點，紅色為終點，保持全模式視覺一致性
-           L.circleMarker(latlngs[0], { radius: 6, color: '#16a34a', fillColor: '#16a34a', fillOpacity: 1 }).bindPopup("起點").addTo(group);
+           // 統一綠點起點，紅點終點 (依指揮官指示修復)
+           L.circleMarker(latlngs[0], { 
+             radius: 6, 
+             color: '#16a34a', 
+             fillColor: '#16a34a', 
+             fillOpacity: 1 
+           }).bindPopup(isCircle ? "圓心" : "起點").addTo(group);
            
            L.circleMarker(latlngs[latlngs.length - 1], { radius: 6, color: '#dc2626', fillColor: '#dc2626', fillOpacity: 1 }).bindPopup("終點").addTo(group);
         }
@@ -944,91 +941,91 @@
           {loading && (
             <div className={`absolute inset-0 z-[1000] rounded-xl flex items-center justify-center backdrop-blur-sm transition-colors duration-300 ${isDark ? 'bg-slate-900/40' : 'bg-stone-200/60'}`}>
               <i className={`fas fa-spinner fa-spin text-3xl ${isDark ? 'text-blue-400' : 'text-blue-600'}`}></i>
-              <span className={`ml-3 font-bold tracking-widest ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>運算中...</span>
+              <span className={`ml-3 font-bold tracking-widest text-sm ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>運算中...</span>
             </div>
           )}
           
-          <div className="order-2 lg:order-1 lg:col-span-4 flex flex-col gap-4 h-auto lg:h-full min-h-0 z-20">
-            <div className="p-3 sm:p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <h2 className={`text-xs sm:text-sm font-bold mb-3 flex items-center gap-2 ${isDark ? 'text-blue-400' : 'text-stone-800'}`}><i className="fas fa-crosshairs"></i>幾何矩陣佈線</h2>
+          <div className="order-2 lg:order-1 lg:col-span-4 flex flex-col gap-4 min-h-[600px] h-[65vh] lg:h-full z-20">
+            <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
+              <h2 className={`text-sm sm:text-base font-bold mb-3 flex items-center gap-2 ${isDark ? 'text-blue-400' : 'text-stone-800'}`}><i className="fas fa-crosshairs"></i>幾何矩陣佈線</h2>
               
-              <div className="flex gap-2 mb-3">
-                <input type="text" className={`flex-grow border rounded-lg p-2 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} value={searchQuery} onChange={(e)=>setSearchQuery(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && searchLocation()} placeholder="搜尋起點 (如: 台北車站)" />
-                <button onClick={searchLocation} className={`px-3 rounded-lg border transition-colors duration-300 shadow-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-white' : 'bg-white hover:bg-stone-100 border-stone-300 text-stone-700'}`} title="搜尋"><i className="fas fa-search"></i></button>
-                <button onClick={locateMe} className={`px-3 rounded-lg border transition-colors duration-300 shadow-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-blue-400' : 'bg-white hover:bg-stone-100 border-stone-300 text-blue-600'}`} title="定位我的位置"><i className="fas fa-location-arrow"></i></button>
+              <div className="flex gap-2 mb-4">
+                <input type="text" className={`flex-grow border rounded-lg p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} value={searchQuery} onChange={(e)=>setSearchQuery(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && searchLocation()} placeholder="搜尋起點 (如: 台北車站)" />
+                <button onClick={searchLocation} className={`px-4 rounded-lg border transition-colors duration-300 shadow-sm text-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-white' : 'bg-white hover:bg-stone-100 border-stone-300 text-stone-700'}`} title="搜尋"><i className="fas fa-search"></i></button>
+                <button onClick={locateMe} className={`px-4 rounded-lg border transition-colors duration-300 shadow-sm text-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-blue-400' : 'bg-white hover:bg-stone-100 border-stone-300 text-blue-600'}`} title="定位我的位置"><i className="fas fa-location-arrow"></i></button>
               </div>
 
-              <input type="text" className={`w-full border rounded p-1.5 text-xs outline-none mb-3 focus:outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} value={config.startCoord} onChange={(e)=>setConfig({...config, startCoord: e.target.value})} placeholder="請輸入起點座標..." />
+              <input type="text" className={`w-full border rounded p-2 text-sm outline-none mb-3 focus:outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} value={config.startCoord} onChange={(e)=>setConfig({...config, startCoord: e.target.value})} placeholder="請輸入起點座標..." />
               
               <div className="flex rounded border overflow-hidden mb-3 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600 shadow-none dark:shadow-inner">
-                <button onClick={()=>{const n={...config, axis:'LINE'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-1.5 text-[10px] font-bold transition-colors ${config.axis==='LINE' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-stone-500 hover:text-stone-700')}`}>單向平行</button>
-                <button onClick={()=>{const n={...config, axis:'GRID'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-1.5 text-[10px] font-bold transition-colors ${config.axis==='GRID' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-stone-500 hover:text-stone-700')}`}>矩陣棋盤</button>
-                <button onClick={()=>{const n={...config, axis:'CIRCLE'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-1.5 text-[10px] font-bold transition-colors ${config.axis==='CIRCLE' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-stone-500 hover:text-stone-700')}`}>同心圓</button>
+                <button onClick={()=>{const n={...config, axis:'LINE'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-2 text-xs font-bold transition-colors ${config.axis==='LINE' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-stone-500 hover:text-stone-700')}`}>單向平行</button>
+                <button onClick={()=>{const n={...config, axis:'GRID'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-2 text-xs font-bold transition-colors ${config.axis==='GRID' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-stone-500 hover:text-stone-700')}`}>矩陣棋盤</button>
+                <button onClick={()=>{const n={...config, axis:'CIRCLE'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-2 text-xs font-bold transition-colors ${config.axis==='CIRCLE' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-stone-500 hover:text-stone-700')}`}>同心圓</button>
               </div>
 
-              <div className={`grid ${config.axis === 'CIRCLE' ? 'grid-cols-2' : 'grid-cols-3'} gap-2 mb-3`}>
+              <div className={`grid ${config.axis === 'CIRCLE' ? 'grid-cols-2' : 'grid-cols-3'} gap-3 mb-4`}>
                 {config.axis !== 'CIRCLE' && (
                   <>
-                    <div><label className="text-[9px] text-stone-500 block mb-1">單線長度(km)</label><input type="number" step="0.1" className={`w-full border rounded p-1 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.width} onChange={(e)=>setConfig({...config, width: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
-                    <div><label className="text-[9px] text-stone-500 block mb-1">平行線數量</label><input type="number" className={`w-full border rounded p-1 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.rows} onChange={(e)=>setConfig({...config, rows: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
+                    <div><label className="text-xs text-stone-500 block mb-1.5">單線長度(km)</label><input type="number" step="0.1" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.width} onChange={(e)=>setConfig({...config, width: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
+                    <div><label className="text-xs text-stone-500 block mb-1.5">平行線數量</label><input type="number" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.rows} onChange={(e)=>setConfig({...config, rows: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
                   </>
                 )}
                 {config.axis === 'CIRCLE' && (
-                  <div><label className="text-[9px] text-stone-500 block mb-1 font-bold text-purple-500"><i className="fas fa-bullseye mr-1"></i>同心圓外擴層數</label><input type="number" min="1" max="20" className={`w-full border rounded p-1 text-xs outline-none transition-colors duration-300 font-bold ${isDark ? 'bg-slate-900 border-purple-500/50 text-purple-300 focus:border-purple-400' : 'bg-purple-50 border-purple-300 text-purple-700 focus:border-purple-500'}`} value={config.layers || 1} onChange={(e)=>{let v = parseInt(e.target.value)||1; if(v<1)v=1; setConfig({...config, layers: v})}} onBlur={()=>generateGrid(null, false)} /></div>
+                  <div><label className="text-xs text-stone-500 block mb-1.5 font-bold text-purple-500"><i className="fas fa-bullseye mr-1"></i>同心圓外擴層數</label><input type="number" min="1" max="20" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 font-bold ${isDark ? 'bg-slate-900 border-purple-500/50 text-purple-300 focus:border-purple-400' : 'bg-purple-50 border-purple-300 text-purple-700 focus:border-purple-500'}`} value={config.layers || 1} onChange={(e)=>{let v = parseInt(e.target.value)||1; if(v<1)v=1; setConfig({...config, layers: v})}} onBlur={()=>generateGrid(null, false)} /></div>
                 )}
-                <div><label className="text-[9px] text-stone-500 block mb-1">時速(km/h)</label><input type="number" className={`w-full border rounded p-1 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.speedKmH} onChange={(e)=>setConfig({...config, speedKmH: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
+                <div><label className="text-xs text-stone-500 block mb-1.5">時速(km/h)</label><input type="number" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.speedKmH} onChange={(e)=>setConfig({...config, speedKmH: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
               </div>
               
-              <div className="mb-4 bg-stone-200/50 dark:bg-slate-900/50 p-2 rounded-lg border border-stone-300 dark:border-slate-700 shadow-inner transition-colors duration-300">
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-[10px] font-bold text-stone-600 dark:text-slate-400"><i className="fas fa-sync-alt mr-1"></i>網格旋轉微調</label>
-                  <div className="flex items-center gap-1">
-                    <input type="number" min="0" max="359" className={`w-12 text-center border rounded p-0.5 text-xs outline-none transition-colors duration-300 font-mono ${isDark ? 'bg-slate-800 border-slate-600 text-blue-400 focus:border-blue-500' : 'bg-white border-stone-300 text-blue-600 focus:border-blue-400'}`} value={config.angle || 0} onChange={(e)=>{const n={...config, angle: parseInt(e.target.value)||0}; setConfig(n); generateGrid(n, false);}} />
-                    <span className="text-[10px] text-stone-500 dark:text-slate-500 font-bold">°</span>
+              <div className="mb-4 bg-stone-200/50 dark:bg-slate-900/50 p-3 rounded-lg border border-stone-300 dark:border-slate-700 shadow-inner transition-colors duration-300">
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-xs font-bold text-stone-600 dark:text-slate-400"><i className="fas fa-sync-alt mr-1"></i>網格旋轉微調</label>
+                  <div className="flex items-center gap-1.5">
+                    <input type="number" min="0" max="359" className={`w-14 text-center border rounded p-1 text-sm outline-none transition-colors duration-300 font-mono ${isDark ? 'bg-slate-800 border-slate-600 text-blue-400 focus:border-blue-500' : 'bg-white border-stone-300 text-blue-600 focus:border-blue-400'}`} value={config.angle || 0} onChange={(e)=>{const n={...config, angle: parseInt(e.target.value)||0}; setConfig(n); generateGrid(n, false);}} />
+                    <span className="text-xs text-stone-500 dark:text-slate-500 font-bold">°</span>
                   </div>
                 </div>
-                <input type="range" min="0" max="359" className="w-full h-1.5 bg-stone-300 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600 hover:accent-blue-500 transition-colors duration-300" value={config.angle || 0} onChange={(e)=>{const n={...config, angle: parseInt(e.target.value)||0}; setConfig(n); generateGrid(n, false);}} />
+                <input type="range" min="0" max="359" className="w-full h-2 bg-stone-300 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600 hover:accent-blue-500 transition-colors duration-300" value={config.angle || 0} onChange={(e)=>{const n={...config, angle: parseInt(e.target.value)||0}; setConfig(n); generateGrid(n, false);}} />
               </div>
 
               {config.axis !== 'CIRCLE' && (
-                <div className="grid grid-cols-2 gap-2 mb-4">
-                  <select className={`w-full border rounded p-1.5 text-[10px] sm:text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white shadow-inner focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.sweepDir} onChange={(e)=>{const n={...config, sweepDir: e.target.value}; setConfig(n); generateGrid(n, false);}}>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <select className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white shadow-inner focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.sweepDir} onChange={(e)=>{const n={...config, sweepDir: e.target.value}; setConfig(n); generateGrid(n, false);}}>
                       <option value="R">向右畫線 (→)</option>
                       <option value="L">向左畫線 (←)</option>
                   </select>
-                  <select className={`w-full border rounded p-1.5 text-[10px] sm:text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white shadow-inner focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.advDir} onChange={(e)=>{const n={...config, advDir: e.target.value}; setConfig(n); generateGrid(n, false);}}>
+                  <select className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white shadow-inner focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={config.advDir} onChange={(e)=>{const n={...config, advDir: e.target.value}; setConfig(n); generateGrid(n, false);}}>
                       <option value="F">向前推進 (↑)</option>
                       <option value="B">向後推進 (↓)</option>
                   </select>
                 </div>
               )}
 
-              <button onClick={()=>generateGrid(null, true)} disabled={loading} className={`w-full text-white font-bold py-2 rounded-lg active:scale-95 transition text-xs disabled:opacity-50 ${isDark ? 'bg-blue-600 hover:brightness-110 shadow-lg' : 'bg-stone-800 hover:bg-stone-700 shadow-sm'}`}><i className="fas fa-search-location mr-2"></i>生成並置中預覽</button>
+              <button onClick={()=>generateGrid(null, true)} disabled={loading} className={`w-full text-white font-bold py-2.5 rounded-lg active:scale-95 transition text-sm disabled:opacity-50 ${isDark ? 'bg-blue-600 hover:brightness-110 shadow-lg' : 'bg-stone-800 hover:bg-stone-700 shadow-sm'}`}><i className="fas fa-search-location mr-2"></i>生成並置中預覽</button>
             </div>
             
-            <div className="flex-1 p-3 sm:p-4 rounded-xl border flex flex-col min-h-[200px] transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <div className="flex justify-between items-center mb-2 shrink-0">
-                <h2 className={`text-xs sm:text-sm font-bold ${isDark ? 'text-blue-400' : 'text-stone-800'}`}>輸出結果</h2>
+            <div className="flex-1 p-4 rounded-xl border flex flex-col min-h-[250px] transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
+              <div className="flex justify-between items-center mb-3 shrink-0">
+                <h2 className={`text-sm sm:text-base font-bold ${isDark ? 'text-blue-400' : 'text-stone-800'}`}>輸出結果</h2>
                 <div className="flex rounded border overflow-hidden transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700">
-                    <button onClick={()=>setOutputFormat('gpx')} className={`px-2 py-1 text-[9px] transition-colors ${outputFormat==='gpx' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
-                    <button onClick={()=>setOutputFormat('csv')} className={`px-2 py-1 text-[9px] transition-colors ${outputFormat==='csv' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>座標</button>
+                    <button onClick={()=>setOutputFormat('gpx')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='gpx' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
+                    <button onClick={()=>setOutputFormat('csv')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='csv' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>座標</button>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2 mb-2 shrink-0">
-                <div className="p-1.5 rounded border text-center transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700"><span className="block text-[9px] text-stone-500">總里程</span><span className={`font-bold text-sm ${isDark ? 'text-blue-400' : 'text-stone-800'}`}>{stats.dist} km</span></div>
-                <div className="p-1.5 rounded border text-center transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700"><span className="block text-[9px] text-stone-500">總時間</span><span className={`font-bold text-sm ${isDark ? 'text-blue-400' : 'text-stone-800'}`}>{stats.time} min</span></div>
+              <div className="grid grid-cols-2 gap-3 mb-3 shrink-0">
+                <div className="p-2 rounded border text-center transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700"><span className="block text-xs text-stone-500 mb-1">總里程</span><span className={`font-bold text-base ${isDark ? 'text-blue-400' : 'text-stone-800'}`}>{stats.dist} km</span></div>
+                <div className="p-2 rounded border text-center transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700"><span className="block text-xs text-stone-500 mb-1">總時間</span><span className={`font-bold text-base ${isDark ? 'text-blue-400' : 'text-stone-800'}`}>{stats.time} min</span></div>
               </div>
-              <div className="relative flex-1 rounded border min-h-[60px] transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700 shadow-inner">
-                <textarea className={`w-full h-full bg-transparent text-[9px] p-2 outline-none custom-scrollbar font-mono ${isDark ? 'text-blue-200' : 'text-stone-700'}`} readOnly value={outputFormat==='gpx'?gpxOut:csvOut} placeholder="等待生成..."></textarea>
-                {currentOut && <div className="absolute bottom-1 right-1 flex gap-1"><button onClick={copyToClipboard} className={`p-1 rounded active:scale-95 transition ${isDark ? 'bg-slate-700 text-white' : 'bg-stone-100 border border-stone-300 text-stone-600 hover:bg-stone-200'}`}><i className={`fas ${copied?`fa-check ${isDark ? 'text-blue-400' : 'text-stone-800'}`:`fa-copy`} text-[10px]`}></i></button><button onClick={dlGPX} className={`text-white px-2 rounded text-[10px] font-bold active:scale-95 transition shadow-sm ${isDark ? 'bg-blue-600' : 'bg-stone-800 hover:bg-stone-700'}`}><i className="fas fa-download"></i></button></div>}
+              <div className="relative flex-1 rounded border min-h-[80px] transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700 shadow-inner">
+                <textarea className={`w-full h-full bg-transparent text-xs p-3 outline-none custom-scrollbar font-mono ${isDark ? 'text-blue-200' : 'text-stone-700'}`} readOnly value={outputFormat==='gpx'?gpxOut:csvOut} placeholder="等待生成..."></textarea>
+                {currentOut && <div className="absolute bottom-2 right-2 flex gap-1.5"><button onClick={copyToClipboard} className={`p-1.5 rounded active:scale-95 transition ${isDark ? 'bg-slate-700 text-white' : 'bg-stone-100 border border-stone-300 text-stone-600 hover:bg-stone-200'}`}><i className={`fas ${copied?`fa-check ${isDark ? 'text-blue-400' : 'text-stone-800'}`:`fa-copy`} text-sm`}></i></button><button onClick={dlGPX} className={`text-white px-3 py-1.5 rounded text-sm font-bold active:scale-95 transition shadow-sm ${isDark ? 'bg-blue-600 hover:bg-blue-500' : 'bg-stone-800 hover:bg-stone-700'}`}><i className="fas fa-download"></i></button></div>}
               </div>
             </div>
           </div>
           
-          <div className="order-1 lg:order-2 lg:col-span-8 rounded-xl border relative overflow-hidden min-h-[45vh] lg:h-full flex flex-col pb-4 transition-colors duration-300 bg-stone-100 dark:bg-slate-800/50 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-2xl z-10">
-             <div className="absolute top-2 left-2 z-20 flex gap-2 w-full pr-4 pointer-events-none">
-               <span className={`px-2 py-1.5 rounded text-[10px] border shadow-sm dark:shadow-md backdrop-blur pointer-events-auto flex items-center gap-1 font-bold transition-colors duration-300 bg-stone-100/90 dark:bg-slate-900/90 border-stone-300 dark:border-slate-700 ${isDark ? 'text-blue-400' : 'text-stone-800'}`}><i className="fas fa-hand-pointer mr-1 text-blue-500"></i> 點擊地圖設定起點</span>
-               <button onClick={centerPath} className="border px-2 py-1.5 rounded text-[10px] pointer-events-auto ml-auto transition active:scale-95 flex items-center gap-1 shadow-sm font-semibold duration-300 bg-stone-200 dark:bg-slate-700/90 border-stone-300 dark:border-slate-600 hover:bg-stone-300 dark:hover:bg-slate-600 text-stone-700 dark:text-white"><i className="fas fa-crosshairs"></i>置中軌跡</button>
+          <div className="order-1 lg:order-2 lg:col-span-8 rounded-xl border relative overflow-hidden min-h-[50vh] lg:h-full flex flex-col pb-4 transition-colors duration-300 bg-stone-100 dark:bg-slate-800/50 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-2xl z-10">
+             <div className="absolute top-3 left-3 z-20 flex gap-2 w-full pr-6 pointer-events-none">
+               <span className={`px-3 py-2 rounded-lg text-xs border shadow-sm dark:shadow-md backdrop-blur pointer-events-auto flex items-center gap-1.5 font-bold transition-colors duration-300 bg-stone-100/90 dark:bg-slate-900/90 border-stone-300 dark:border-slate-700 ${isDark ? 'text-blue-400' : 'text-stone-800'}`}><i className="fas fa-hand-pointer mr-1 text-blue-500"></i> 點擊地圖設定起點</span>
+               <button onClick={centerPath} className="border px-3 py-2 rounded-lg text-xs pointer-events-auto ml-auto transition active:scale-95 flex items-center gap-1.5 shadow-sm font-semibold duration-300 bg-stone-200 dark:bg-slate-700/90 border-stone-300 dark:border-slate-600 hover:bg-stone-300 dark:hover:bg-slate-600 text-stone-700 dark:text-white"><i className="fas fa-crosshairs"></i>置中軌跡</button>
              </div>
              
              <div id="leaflet-map-m2" className="absolute inset-0 z-0"></div>
@@ -1037,7 +1034,7 @@
       );
     }
 
-    // --- 【子元件：模式三 地圖圈地真實 S2 掃蕩】 (維持原樣) ---
+    // --- 【子元件：模式三 地圖圈地真實 S2 掃蕩】 ---
     function Mode3({ isDark }) {
       const mapRef = useRef(null);
       const tileLayerRef = useRef(null);
@@ -1291,31 +1288,31 @@
           {loading && (
             <div className={`absolute inset-0 z-[1000] rounded-xl flex items-center justify-center backdrop-blur-sm transition-colors duration-300 ${isDark ? 'bg-slate-900/40' : 'bg-stone-200/60'}`}>
               <i className={`fas fa-spinner fa-spin text-3xl ${isDark ? 'text-blue-400' : 'text-blue-600'}`}></i>
-              <span className={`ml-3 font-bold tracking-widest ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>地圖定位與運算中...</span>
+              <span className={`ml-3 font-bold tracking-widest text-sm ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>地圖定位與運算中...</span>
             </div>
           )}
-          <div className="lg:col-span-4 flex flex-col gap-4 h-[500px] lg:h-full min-h-0 z-20">
-            <div className="p-3 sm:p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <h2 className={`text-xs sm:text-sm font-bold mb-3 ${isDark ? 'text-blue-400' : 'text-stone-800'}`}><i className="fas fa-draw-polygon mr-2"></i>地圖圈地控制</h2>
+          <div className="lg:col-span-4 flex flex-col gap-4 min-h-[600px] h-[65vh] lg:h-full z-20">
+            <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
+              <h2 className={`text-sm sm:text-base font-bold mb-4 ${isDark ? 'text-blue-400' : 'text-stone-800'}`}><i className="fas fa-draw-polygon mr-2"></i>地圖圈地控制</h2>
               
               <div className="flex gap-2 mb-4">
-                <input type="text" className={`flex-grow border rounded-lg p-2 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} value={searchQuery} onChange={(e)=>setSearchQuery(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && searchLocation()} placeholder="搜尋地點 (如: 大安森林公園)" />
-                <button onClick={searchLocation} className={`px-3 rounded-lg border transition-colors duration-300 shadow-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-white' : 'bg-white hover:bg-stone-100 border-stone-300 text-stone-700'}`} title="搜尋"><i className="fas fa-search"></i></button>
-                <button onClick={locateMe} className={`px-3 rounded-lg border transition-colors duration-300 shadow-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-blue-400' : 'bg-white hover:bg-stone-100 border-stone-300 text-blue-600'}`} title="定位我的位置"><i className="fas fa-location-arrow"></i></button>
+                <input type="text" className={`flex-grow border rounded-lg p-2.5 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} value={searchQuery} onChange={(e)=>setSearchQuery(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && searchLocation()} placeholder="搜尋地點 (如: 大安森林公園)" />
+                <button onClick={searchLocation} className={`px-4 rounded-lg border transition-colors duration-300 shadow-sm text-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-white' : 'bg-white hover:bg-stone-100 border-stone-300 text-stone-700'}`} title="搜尋"><i className="fas fa-search"></i></button>
+                <button onClick={locateMe} className={`px-4 rounded-lg border transition-colors duration-300 shadow-sm text-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-blue-400' : 'bg-white hover:bg-stone-100 border-stone-300 text-blue-600'}`} title="定位我的位置"><i className="fas fa-location-arrow"></i></button>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <div>
-                  <label className="text-[10px] font-semibold block mb-1 text-stone-500 dark:text-slate-400">S2 網格精確度層級</label>
-                  <select className={`w-full border rounded-lg p-2 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={s2Level} onChange={(e)=>setS2Level(e.target.value)}>
+                  <label className="text-xs font-semibold block mb-1.5 text-stone-500 dark:text-slate-400">S2 網格精確度層級</label>
+                  <select className={`w-full border rounded-lg p-2.5 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={s2Level} onChange={(e)=>setS2Level(e.target.value)}>
                     <option value="16">Level 16</option>
                     <option value="17">Level 17 (補給站/大花/預設)</option>
                     <option value="18">Level 18</option>
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] font-semibold block mb-1 text-stone-500 dark:text-slate-400">路線演算模式</label>
-                  <select className={`w-full border rounded-lg p-2 text-xs outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={pathMode} onChange={(e)=>setPathMode(e.target.value)}>
+                  <label className="text-xs font-semibold block mb-1.5 text-stone-500 dark:text-slate-400">路線演算模式</label>
+                  <select className={`w-full border rounded-lg p-2.5 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-stone-200 border-stone-300 text-stone-800 focus:border-stone-400 focus:bg-stone-100'}`} value={pathMode} onChange={(e)=>setPathMode(e.target.value)}>
                     <option value="vertical-ew">縱向 S 型 (東至西 / 右至左)</option>
                     <option value="vertical-we">縱向 S 型 (西至東 / 左至右)</option>
                   </select>
@@ -1323,22 +1320,22 @@
               </div>
             </div>
             
-            <div className="flex-1 p-3 sm:p-4 rounded-xl border flex flex-col min-h-[200px] transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <div className="flex justify-between items-center mb-2 shrink-0">
-                <h2 className={`text-xs sm:text-sm font-bold ${isDark ? 'text-blue-400' : 'text-stone-800'}`}>圈地結果與輸出</h2>
+            <div className="flex-1 p-4 rounded-xl border flex flex-col min-h-[250px] transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
+              <div className="flex justify-between items-center mb-3 shrink-0">
+                <h2 className={`text-sm sm:text-base font-bold ${isDark ? 'text-blue-400' : 'text-stone-800'}`}>圈地結果與輸出</h2>
                 <div className="flex rounded border overflow-hidden transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700">
-                    <button onClick={()=>setOutputFormat('gpx')} className={`px-2 py-1 text-[9px] transition-colors ${outputFormat==='gpx' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
-                    <button onClick={()=>setOutputFormat('csv')} className={`px-2 py-1 text-[9px] transition-colors ${outputFormat==='csv' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>座標</button>
+                    <button onClick={()=>setOutputFormat('gpx')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='gpx' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
+                    <button onClick={()=>setOutputFormat('csv')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='csv' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>座標</button>
                 </div>
               </div>
-              <div className="mb-2 shrink-0">
-                <span className={`block w-full p-2 rounded-lg border text-center text-xs font-bold transition-colors duration-300 ${pathData.length > 0 ? (isDark ? 'bg-blue-900/50 border-blue-700 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-700') : (isDark ? 'bg-slate-900 border-slate-700 text-slate-500' : 'bg-stone-200 border-stone-300 text-stone-500')}`}>
+              <div className="mb-3 shrink-0">
+                <span className={`block w-full p-2.5 rounded-lg border text-center text-sm font-bold transition-colors duration-300 ${pathData.length > 0 ? (isDark ? 'bg-blue-900/50 border-blue-700 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-700') : (isDark ? 'bg-slate-900 border-slate-700 text-slate-500' : 'bg-stone-200 border-stone-300 text-stone-500')}`}>
                   {badgeText}
                 </span>
               </div>
-              <div className="relative flex-1 rounded-lg border min-h-[60px] transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700 shadow-inner">
-                <textarea className={`w-full h-full bg-transparent text-[9px] p-2 outline-none custom-scrollbar font-mono ${isDark ? 'text-blue-200' : 'text-stone-700'}`} readOnly value={currentOut} placeholder="請使用右側地圖的左上方多邊形工具，畫出您想涵蓋的範圍..."></textarea>
-                {currentOut && <div className="absolute bottom-2 right-2 flex gap-1.5"><button onClick={copyToClipboard} className={`p-1.5 rounded active:scale-95 transition ${isDark ? 'bg-slate-700 text-white' : 'bg-stone-100 border border-stone-300 text-stone-600 hover:bg-stone-200'}`}><i className={`fas ${copied?`fa-check ${isDark ? 'text-blue-400' : 'text-stone-800'}`:`fa-copy`} text-[11px]`}></i></button><button onClick={dlGPX} className={`text-white px-3 rounded text-[11px] font-bold active:scale-95 transition shadow-sm ${isDark ? 'bg-blue-600 hover:bg-blue-500' : 'bg-stone-800 hover:bg-stone-700'}`}><i className="fas fa-download mr-1"></i> 下載</button></div>}
+              <div className="relative flex-1 rounded-lg border min-h-[80px] transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700 shadow-inner">
+                <textarea className={`w-full h-full bg-transparent text-xs p-3 outline-none custom-scrollbar font-mono ${isDark ? 'text-blue-200' : 'text-stone-700'}`} readOnly value={currentOut} placeholder="請使用右側地圖的左上方多邊形工具，畫出您想涵蓋的範圍..."></textarea>
+                {currentOut && <div className="absolute bottom-2 right-2 flex gap-1.5"><button onClick={copyToClipboard} className={`p-2 rounded active:scale-95 transition ${isDark ? 'bg-slate-700 text-white' : 'bg-stone-100 border border-stone-300 text-stone-600 hover:bg-stone-200'}`}><i className={`fas ${copied?`fa-check ${isDark ? 'text-blue-400' : 'text-stone-800'}`:`fa-copy`} text-sm`}></i></button><button onClick={dlGPX} className={`text-white px-4 py-2 rounded text-sm font-bold active:scale-95 transition shadow-sm ${isDark ? 'bg-blue-600 hover:bg-blue-500' : 'bg-stone-800 hover:bg-stone-700'}`}><i className="fas fa-download mr-1"></i> 下載</button></div>}
               </div>
             </div>
           </div>
@@ -1367,22 +1364,22 @@
       return (
         <div className="lg:h-screen min-h-screen flex flex-col p-2 sm:p-4">
           <div className="max-w-[1600px] w-full mx-auto flex-1 flex flex-col min-h-0">
-            <div className="flex flex-col sm:flex-row justify-between items-center mb-3 p-3 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-lg">
-              <div className="flex items-center gap-3 px-2">
-                <i className={`fab fa-neos text-2xl ${isDark ? 'text-emerald-400' : 'text-stone-800'}`}></i>
+            <div className="flex flex-col sm:flex-row justify-between items-center mb-4 p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-lg">
+              <div className="flex items-center gap-4 px-2">
+                <i className={`fab fa-neos text-3xl ${isDark ? 'text-emerald-400' : 'text-stone-800'}`}></i>
                 <div>
-                  <h1 className={`text-base font-black tracking-wider uppercase ${isDark ? 'text-white' : 'text-stone-800'}`}>PIKMIN NAVIGATOR</h1>
-                  <p className="text-[9px] tracking-widest flex items-center gap-1 text-stone-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V36<span className="border px-1 rounded-sm text-[8px] font-bold shadow-sm transition-colors duration-300 bg-stone-200 dark:bg-blue-500 text-stone-700 dark:text-white border-stone-300 dark:border-transparent">一直在改版</span></p>
+                  <h1 className={`text-xl font-black tracking-wider uppercase ${isDark ? 'text-white' : 'text-stone-800'}`}>PIKMIN NAVIGATOR</h1>
+                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-stone-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V36<span className="border px-1.5 py-0.5 rounded-sm text-[10px] font-bold shadow-sm transition-colors duration-300 bg-stone-200 dark:bg-blue-600 text-stone-700 dark:text-white border-stone-300 dark:border-transparent">還在改版</span></p>
                 </div>
               </div>
-              <div className="flex rounded-lg p-1 border w-full sm:w-auto mt-2 sm:mt-0 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700 overflow-x-auto custom-scrollbar">
-                <button onClick={()=>setAppMode('mode1')} className={`flex-1 sm:flex-none px-3 sm:px-5 py-1.5 rounded-md text-[11px] sm:text-xs font-bold transition-colors whitespace-nowrap ${appMode==='mode1' ? (isDark ? 'bg-emerald-500 text-slate-900' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-emerald-400' : 'text-stone-500 hover:text-stone-700')}`}><i className="fas fa-crosshairs mr-1"></i> 精準控花</button>
-                <button onClick={()=>setAppMode('mode2')} className={`flex-1 sm:flex-none px-3 sm:px-5 py-1.5 rounded-md text-[11px] sm:text-xs font-bold transition-colors whitespace-nowrap ${appMode==='mode2' ? (isDark ? 'bg-blue-500 text-slate-900' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-blue-400' : 'text-stone-500 hover:text-stone-700')}`}><i className="fas fa-border-all mr-1"></i> 盲掃佈線</button>
-                <button onClick={()=>setAppMode('mode3')} className={`flex-1 sm:flex-none px-3 sm:px-5 py-1.5 rounded-md text-[11px] sm:text-xs font-bold transition-colors whitespace-nowrap ${appMode==='mode3' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-blue-400' : 'text-stone-500 hover:text-stone-700')}`}><i className="fas fa-draw-polygon mr-1"></i> 地圖圈地</button>
+              <div className="flex rounded-lg p-1.5 border w-full sm:w-auto mt-3 sm:mt-0 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700 overflow-x-auto custom-scrollbar">
+                <button onClick={()=>setAppMode('mode1')} className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-md text-sm font-bold transition-colors whitespace-nowrap ${appMode==='mode1' ? (isDark ? 'bg-emerald-500 text-slate-900' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-emerald-400' : 'text-stone-500 hover:text-stone-700')}`}><i className="fas fa-crosshairs mr-1.5"></i> 精準控花</button>
+                <button onClick={()=>setAppMode('mode2')} className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-md text-sm font-bold transition-colors whitespace-nowrap ${appMode==='mode2' ? (isDark ? 'bg-blue-500 text-slate-900' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-blue-400' : 'text-stone-500 hover:text-stone-700')}`}><i className="fas fa-border-all mr-1.5"></i> 盲掃佈線</button>
+                <button onClick={()=>setAppMode('mode3')} className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-md text-sm font-bold transition-colors whitespace-nowrap ${appMode==='mode3' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-blue-400' : 'text-stone-500 hover:text-stone-700')}`}><i className="fas fa-draw-polygon mr-1.5"></i> 地圖圈地</button>
                 
-                <div className="w-px mx-1 transition-colors duration-300 bg-stone-300 dark:bg-slate-700 shrink-0"></div>
+                <div className="w-px mx-2 transition-colors duration-300 bg-stone-300 dark:bg-slate-700 shrink-0"></div>
                 
-                <button onClick={()=>setIsDark(!isDark)} className="w-9 sm:w-10 flex justify-center items-center py-1.5 rounded-md text-sm font-bold transition-colors text-stone-500 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-300 shrink-0" title={isDark ? "切換至明亮模式" : "切換至深色模式"}>
+                <button onClick={()=>setIsDark(!isDark)} className="w-10 sm:w-12 flex justify-center items-center py-2 rounded-md text-base font-bold transition-colors text-stone-500 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-300 shrink-0" title={isDark ? "切換至明亮模式" : "切換至深色模式"}>
                   <i className={`fas fa-fw ${isDark ? 'fa-sun' : 'fa-moon'}`}></i>
                 </button>
               </div>
@@ -1400,3 +1397,6 @@
   </script>
 </body>
 </html>
+
+
+```
