@@ -579,7 +579,7 @@
 
           <div className="lg:col-span-4 flex flex-col gap-4 min-h-[600px] h-[65vh] lg:h-full z-20">
             <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <div className="flex justify-between items-center mb-3">
+              <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
                 <h2 className={`text-sm sm:text-base font-bold flex items-center gap-2 ${isDark ? theme.text : 'text-stone-800'}`}><i className="fas fa-list-ol"></i> 1. 貼上座標</h2>
                 <div className="flex rounded border overflow-hidden transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600">
                   <button onClick={() => setPatternType('S')} className={`px-3 py-1.5 text-xs font-bold transition-colors ${patternType==='S' ? (isDark ? 'bg-emerald-500 text-slate-900' : 'bg-stone-100 text-stone-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-emerald-400' : 'text-stone-500 hover:text-stone-700')}`}>常規 S型</button>
@@ -600,7 +600,7 @@
             </div>
 
             <div className="flex-1 p-4 rounded-xl border flex flex-col min-h-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <div className="flex justify-between items-center mb-3 pb-3 border-b shrink-0 transition-colors duration-300 border-stone-300 dark:border-slate-700">
+              <div className="flex flex-wrap justify-between items-center gap-2 mb-3 pb-3 border-b shrink-0 transition-colors duration-300 border-stone-300 dark:border-slate-700">
                 <h2 className={`text-sm sm:text-base font-bold flex items-center gap-2 ${isDark ? theme.text : 'text-stone-800'}`}><i className="fas fa-sliders-h"></i> 2. 序列微調</h2>
                 <div className="flex gap-2">
                     <button onClick={handleDiagnostic} disabled={loading} className="px-3 py-1.5 rounded text-xs font-bold transition active:scale-95 disabled:opacity-50 border bg-stone-200 dark:bg-rose-500/20 text-stone-600 dark:text-rose-400 hover:bg-stone-300 dark:hover:bg-rose-500/40 border-stone-300 dark:border-transparent"><i className="fas fa-brain"></i> 智慧診斷</button>
@@ -632,7 +632,7 @@
 
             <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
               <button onClick={generate} disabled={loading} className={`w-full font-bold py-2.5 rounded-lg shadow-sm dark:shadow-lg mb-3 active:scale-95 transition text-sm disabled:opacity-50 ${theme.bg} ${isDark ? (patternType==='O'?'text-white':'text-slate-900') : 'text-white ' + theme.hoverBg}`}><i className="fas fa-play"></i> 產生雙路線</button>
-              <div className="flex justify-between items-center mb-2 gap-3">
+              <div className="flex flex-wrap justify-between items-center mb-2 gap-2">
                  <div className="flex rounded p-1 flex-1 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border border-stone-300 dark:border-transparent">
                    <button onClick={()=>setOutputTab('pure')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='pure' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>純花點</button>
                    <button onClick={()=>setOutputTab('planting')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='planting' ? (isDark ? theme.bg + ' ' + (patternType==='O'?'text-white':'text-slate-900') : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>種植</button>
@@ -1004,7 +1004,7 @@
             </div>
             
             <div className="flex-1 p-4 rounded-xl border flex flex-col min-h-[250px] transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <div className="flex justify-between items-center mb-3 shrink-0">
+              <div className="flex flex-wrap justify-between items-center gap-2 mb-3 shrink-0">
                 <h2 className={`text-sm sm:text-base font-bold ${isDark ? 'text-blue-400' : 'text-stone-800'}`}>輸出結果</h2>
                 <div className="flex rounded border overflow-hidden transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700">
                     <button onClick={()=>setOutputFormat('gpx')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='gpx' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
@@ -1321,7 +1321,7 @@
             </div>
             
             <div className="flex-1 p-4 rounded-xl border flex flex-col min-h-[250px] transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <div className="flex justify-between items-center mb-3 shrink-0">
+              <div className="flex flex-wrap justify-between items-center gap-2 mb-3 shrink-0">
                 <h2 className={`text-sm sm:text-base font-bold ${isDark ? 'text-blue-400' : 'text-stone-800'}`}>圈地結果與輸出</h2>
                 <div className="flex rounded border overflow-hidden transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700">
                     <button onClick={()=>setOutputFormat('gpx')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='gpx' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
@@ -1369,7 +1369,7 @@
                 <i className={`fab fa-neos text-3xl ${isDark ? 'text-emerald-400' : 'text-stone-800'}`}></i>
                 <div>
                   <h1 className={`text-xl font-black tracking-wider uppercase ${isDark ? 'text-white' : 'text-stone-800'}`}>PIKMIN NAVIGATOR</h1>
-                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-stone-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V36<span className="border px-1.5 py-0.5 rounded-sm text-[10px] font-bold shadow-sm transition-colors duration-300 bg-stone-200 dark:bg-blue-600 text-stone-700 dark:text-white border-stone-300 dark:border-transparent">永遠測試版</span></p>
+                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-stone-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V36.5<span className="border px-1.5 py-0.5 rounded-sm text-[10px] font-bold shadow-sm transition-colors duration-300 bg-stone-200 dark:bg-blue-600 text-stone-700 dark:text-white border-stone-300 dark:border-transparent">永遠測試版</span></p>
                 </div>
               </div>
               <div className="flex rounded-lg p-1.5 border w-full sm:w-auto mt-3 sm:mt-0 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700 overflow-x-auto custom-scrollbar">
