@@ -905,6 +905,22 @@
           setCachedTextBody(body);
           setIsTextDirty(false);
           setIsGeneratingText(false);
+
+          // 修正：加上微小延遲 (100ms)，確保 React 先把線條畫在圖層上後，再呼叫置中，避免被重繪動作打斷
+          setTimeout(() => {
+              if (mapRef.current && body.flatContinuousPath.length > 0) {
+                  const angle = config.angle || 0;
+                  const rotatedFlatPath = rotatePoints(body.flatContinuousPath, lat, lon, angle);
+                  
+                  const bounds = L.latLngBounds(rotatedFlatPath.map(p => [
+                      Array.isArray(p) ? p[0] : p.lat, 
+                      Array.isArray(p) ? p[1] : p.lon
+                  ]));
+                  
+                  // 改回最穩定的 fitBounds，與「生成並置中預覽」行為一致
+                  mapRef.current.fitBounds(bounds, { padding: [30, 30] });
+              }
+          }, 100);
       };
       // --- 文字專用狀態結束 ---
 
@@ -1254,7 +1270,7 @@
                       {isGeneratingText ? (
                           <span><i className="fas fa-spinner fa-spin mr-2"></i> 演算資料中...</span>
                       ) : isTextDirty ? (
-                          <span><i className="fas fa-magic mr-2 text-amber-300"></i> ✨ 重新生成文字路徑</span>
+                          <span><i className="fas fa-search-location mr-2 text-amber-300"></i> ✨ 生成文字並置中預覽</span>
                       ) : (
                           <span><i className="fas fa-check mr-2"></i> ✓ 已是最新路徑 (可調整下方旋轉)</span>
                       )}
