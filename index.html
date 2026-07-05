@@ -22,6 +22,9 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css" />
   <script src="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
   
+  <!-- 引入 opentype.js 解析真實字型外框 -->
+  <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+
   <!-- S2 Geometry 演算法與依賴 -->
   <script src="https://cdn.jsdelivr.net/npm/long@5.2.3/umd/index.js"></script>
   <script>
@@ -56,12 +59,14 @@
   </style>
 </head>
 <body>
+  <!-- 隱藏的 SVG 容器，用於原生的 SVG 外框路徑採樣 -->
+  <svg id="hidden-svg" xmlns="http://www.w3.org/2000/svg" style="position: absolute; width: 0; height: 0; overflow: hidden; opacity: 0;"></svg>
   <div id="root"></div>
 
   <script type="text/babel">
-    // --- 【新增 1】：文字路徑雙引擎 (Hanzi + Borel) 核心工具箱 ---
+    // --- 全新核心：文字路徑雙引擎 (Skeleton + Outline) ---
     
-    // Hanzi Writer 快取，避免重複請求 (加入 3 秒超時防呆保護)
+    // 引擎 1：單線草寫骨架所需的工具
     const HanziCache = {};
     const fetchHanziChar = async (char, timeoutMs = 3000) => {
         if (HanziCache[char]) return HanziCache[char];
@@ -76,18 +81,13 @@
             HanziCache[char] = data;
             return data;
         } catch (e) {
-            if (e.name === 'AbortError') {
-                console.warn(`取得字元 [${char}] 的資料超時 (${timeoutMs}ms)`);
-            } else {
-                console.error(`無法取得字元 [${char}] 的資料`, e);
-            }
+            if (e.name === 'AbortError') console.warn(`取得字元 [${char}] 的資料超時 (${timeoutMs}ms)`);
             return null;
         } finally {
             clearTimeout(timeoutId);
         }
     };
 
-    // Borel 草寫字典 (已修正迴圈與平衡，更新 4 的筆順骨架)
     const VECTOR_DICT = {
       '0': "50,0 20,20 20,80 50,100 80,80 80,20 50,0", '1': "30,30 50,0 50,100", '2': "10,30 50,0 80,30 20,100 90,100", '3': "10,20 50,0 80,25 50,50 90,75 50,100 10,80", '4': "90,70 20,70 70,0 70,100", '5': "80,0 30,0 20,50 80,50 90,75 50,100 10,80", '6': "80,0 20,50 30,100 80,90 80,50 20,50", '7': "10,0 90,0 30,100", '8': "50,50 20,25 50,0 80,25 50,50 20,80 50,100 80,80 50,50", '9': "80,50 20,50 20,10 80,0 70,100",
       'A': "20,100 50,0 80,100 | 30,60 70,60", 'B': "20,0 20,100 | 20,0 70,0 80,25 60,50 20,50 | 20,50 80,50 90,75 70,100 20,100", 'C': "90,20 50,0 10,50 50,100 90,80", 'D': "20,0 20,100 | 20,0 70,0 100,50 70,100 20,100", 'E': "90,0 20,0 20,100 90,100 | 20,50 70,50", 'F': "20,100 20,0 90,0 | 20,50 70,50", 'G': "90,20 50,0 10,50 50,100 90,100 90,50 50,50", 'H': "20,0 20,100 | 80,0 80,100 | 20,50 80,50", 'I': "50,0 50,100 | 20,0 80,0 | 20,100 80,100", 'J': "90,0 90,80 50,100 10,80 10,60", 'K': "20,0 20,100 | 80,0 20,50 80,100", 'L': "20,0 20,100 90,100", 'M': "20,100 20,0 50,50 80,0 80,100", 'N': "20,100 20,0 80,100 80,0", 'O': "50,0 10,50 50,100 90,50 50,0", 'P': "20,100 20,0 | 20,0 80,0 90,25 70,50 20,50", 'Q': "50,0 10,50 50,100 90,50 50,0 | 60,60 100,100", 'R': "20,100 20,0 | 20,0 80,0 90,25 70,50 20,50 | 40,50 90,100", 'S': "90,20 50,0 20,30 80,70 50,100 10,80", 'T': "50,0 50,100 | 10,0 90,0", 'U': "20,0 20,70 50,100 80,70 80,0", 'V': "10,0 50,100 90,0", 'W': "10,0 30,100 50,60 70,100 90,0", 'X': "10,0 90,100 | 90,0 10,100", 'Y': "20,0 20,50 50,100 | 90,0 50,50", 'Z': "10,0 90,0 10,100 90,100",
@@ -107,12 +107,7 @@
         if (points.length < 2) return points;
         if (points.length === 2) {
             let res = [];
-            for(let i=0; i<=resolution; i++) {
-                res.push({
-                    localX: points[0].localX + (points[1].localX - points[0].localX) * (i/resolution),
-                    localY: points[0].localY + (points[1].localY - points[0].localY) * (i/resolution)
-                });
-            }
+            for(let i=0; i<=resolution; i++) res.push({ localX: points[0].localX + (points[1].localX - points[0].localX) * (i/resolution), localY: points[0].localY + (points[1].localY - points[0].localY) * (i/resolution) });
             return res;
         }
         let result = [];
@@ -152,7 +147,6 @@
                 const dx_meters = (pt.localX / 100) * sizeMeters + offsetX;
                 const finalY = pt.localY + bouncyOffset;
                 const dy_meters = (finalY / 100) * sizeMeters;
-                // 使用 111132 常數計算
                 const lat = startLat - (dy_meters / 111132); 
                 const lon = startLon + (dx_meters / (111132 * Math.cos(startLat * Math.PI / 180)));
                 strokeCoords.push([lat, lon]);
@@ -162,7 +156,7 @@
         return { parsedStrokes, advanceWidth: getCharAdvanceWidth(rawLocalStrokes) };
     };
 
-    const generateTextPathEngine = async (text, startLat, startLon, sizeMeters, spacingMeters) => {
+    const generateSkeletonPathEngine = async (text, startLat, startLon, sizeMeters, spacingMeters) => {
         let currentXOffset = 0; 
         let allStrokes = [], jumpLines = [], flatContinuousPath = []; 
         let lastPoint = null;   
@@ -170,14 +164,10 @@
 
         for (let i = 0; i < text.length; i++) {
             const char = text[i];
-            if (char === ' ') {
-                currentXOffset += (sizeMeters * 0.4 + spacingMeters);
-                continue;
-            }
+            if (char === ' ') { currentXOffset += (sizeMeters * 0.4 + spacingMeters); continue; }
 
             const vectorStr = VECTOR_DICT[char] || (/[a-zA-Z0-9]/.test(char) ? VECTOR_DICT[char.toUpperCase()] : null);
             if (vectorStr) {
-                // Borel 英文草寫
                 const { parsedStrokes, advanceWidth } = parseVectorPath(vectorStr, sizeMeters, currentXOffset, startLat, startLon, resolution, i);
                 parsedStrokes.forEach((strokeCoords) => {
                     allStrokes.push(strokeCoords);
@@ -187,7 +177,6 @@
                 });
                 currentXOffset += (advanceWidth / 100) * sizeMeters + spacingMeters;
             } else {
-                // Hanzi 中文處理
                 const data = await fetchHanziChar(char);
                 if (data && data.medians) {
                     data.medians.forEach((stroke) => {
@@ -210,8 +199,89 @@
         }
         return { allStrokes, jumpLines, flatContinuousPath };
     };
-    // --- 核心工具箱結束 ---
 
+    // 引擎 2：真實外框剪影所需的工具
+    const samplePath = (dString, resolution = 15) => {
+        const hiddenSvg = document.getElementById('hidden-svg');
+        if (!hiddenSvg) return [];
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', dString);
+        hiddenSvg.appendChild(path);
+        const length = path.getTotalLength();
+        if (length === 0) { hiddenSvg.removeChild(path); return []; }
+
+        const points = [];
+        for (let i = 0; i <= length; i += resolution) {
+            const pt = path.getPointAtLength(i);
+            points.push({ x: pt.x, y: pt.y });
+        }
+        if (length % resolution !== 0) {
+            const pt = path.getPointAtLength(length);
+            points.push({ x: pt.x, y: pt.y });
+        }
+        hiddenSvg.removeChild(path);
+        return points;
+    };
+
+    const generateOutlinePathEngine = (text, startLat, startLon, sizeMeters, opentypeFont) => {
+        return new Promise((resolve, reject) => {
+            try {
+                let allSubPaths = [];
+                const fontSize = 800; 
+                const pathObj = opentypeFont.getPath(text, 0, fontSize, fontSize);
+                const dStr = pathObj.toPathData();
+                const subPathsStr = dStr.split(/(?=[Mm])/).filter(p => p.trim());
+                
+                subPathsStr.forEach(subD => {
+                    const pts = samplePath(subD, 15);
+                    if (pts.length > 0) allSubPaths.push(pts);
+                });
+
+                if (allSubPaths.length === 0) {
+                    return reject(new Error('未解析出任何路徑（可能是當前字體不支援您輸入的字元，請嘗試上傳中文字型）。'));
+                }
+
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                allSubPaths.forEach(path => {
+                    path.forEach(p => {
+                        if (p.x < minX) minX = p.x;
+                        if (p.x > maxX) maxX = p.x;
+                        if (p.y < minY) minY = p.y;
+                        if (p.y > maxY) maxY = p.y;
+                    });
+                });
+
+                const pixelHeight = maxY - minY;
+                if (pixelHeight === 0) return reject(new Error('字體高度無效。'));
+                const metersPerPixel = sizeMeters / pixelHeight;
+
+                let allStrokes = [];
+                let jumpLines = [];
+                let flatContinuousPath = [];
+                let lastPoint = null;
+
+                allSubPaths.forEach(pathPts => {
+                    let strokeCoords = [];
+                    pathPts.forEach(p => {
+                        const dx_meters = (p.x - minX) * metersPerPixel;
+                        const dy_meters = (maxY - p.y) * metersPerPixel;
+                        const lat = startLat + (dy_meters / 111132);
+                        const lon = startLon + (dx_meters / (111132 * Math.cos(startLat * Math.PI / 180)));
+                        strokeCoords.push([lat, lon]);
+                        flatContinuousPath.push([lat, lon]);
+                    });
+
+                    allStrokes.push(strokeCoords);
+                    if (lastPoint !== null) jumpLines.push([lastPoint, strokeCoords[0]]);
+                    lastPoint = strokeCoords[strokeCoords.length - 1];
+                });
+
+                resolve({ allStrokes, jumpLines, flatContinuousPath });
+            } catch (e) {
+                reject(e);
+            }
+        });
+    };
     const { useState, useMemo, useRef, useEffect, useCallback } = React;
 
     const CONSTANTS = {
@@ -228,7 +298,6 @@
     const calcDistanceKm = (p1, p2) => Math.hypot((p1.lat - p2.lat) * (CONSTANTS.LAT_TO_M / 1000), (p1.lon - p2.lon) * (getLonToMeters(p1.lat) / 1000));
     const calcDistanceM = (p1, p2) => Math.hypot((p1.lat - p2.lat) * CONSTANTS.LAT_TO_M, (p1.lon - p2.lon) * getLonToMeters(p1.lat));
 
-    // 全域旋轉工具 (文字引擎與盲掃共用)
     const rotatePoints = (points, centerLat, centerLon, angleDeg) => {
         if (angleDeg === 0) return points;
         const angleRad = angleDeg * (Math.PI / 180);
@@ -279,7 +348,6 @@
       return [value, setValue];
     }
 
-    // --- SVG Map Interaction Hook ---
     function useInteractiveMap(svgRef, transformRef, setTransform) {
       useEffect(() => {
         const svg = svgRef.current; if (!svg) return;
@@ -359,7 +427,6 @@
       }, []); 
     }
 
-    // --- 【子元件：模式一 精準控花】 ---
     function Mode1({ isDark }) {
       const DIRECTIONS = { 'NW_SE': 'A (左上進)', 'SW_NE': 'B (左下進)', 'NE_SW': 'C (右上進)', 'SE_NW': 'D (右下進)' };
       const ANGLES = [{value:0,label:'0°(直)'},{value:45,label:'45°'},{value:90,label:'90°(橫)'},{value:135,label:'135°'},{value:180,label:'180°'},{value:225,label:'225°'},{value:270,label:'270°'},{value:315,label:'315°'}];
@@ -447,7 +514,6 @@
         setLoading(true);
         setTimeout(() => {
           try {
-            // 1. 預運算距離矩陣 (Precompute Distance Matrix)
             const n = points.length;
             const ptIndexMap = new Map();
             points.forEach((p, idx) => ptIndexMap.set(p.id, idx));
@@ -461,10 +527,8 @@
               }
             }
             
-            // O(1) 快速查表函式
             const fastDist = (p1, p2) => distMatrix[ptIndexMap.get(p1.id)][ptIndexMap.get(p2.id)];
 
-            // 2. 貪婪演算法找初始路徑 (使用 fastDist)
             let unv = [...points]; let cur = unv.shift(); let opt = [cur];
             while (unv.length > 0) {
               let nIdx = 0; let minD = Infinity;
@@ -475,7 +539,6 @@
               cur = unv[nIdx]; opt.push(cur); unv.splice(nIdx, 1);
             }
 
-            // 3. 2-opt 交叉解纏 (使用 fastDist)
             let improved = true;
             while (improved) {
               improved = false;
@@ -911,48 +974,99 @@
       const [stats, setStats] = useState({ dist: 0, time: 0 });
       const [loading, setLoading] = useState(false);
 
-      // --- 新增：文字路徑專用狀態 ---
-      const [textInput, setTextInput] = useState('');
+      // --- 文字路徑雙引擎專用狀態 ---
+      const [textStyle, setTextStyle] = useStickyState('outline', 'pikmin_v38_text_style'); // 'skeleton' 或 'outline'
+      const [textInput, setTextInput] = useState('PIKMIN');
       const [textHeight, setTextHeight] = useState(150);
-      const [textSpacing, setTextSpacing] = useState(-2);
+      const [textSpacing, setTextSpacing] = useState(-2); // 只有 skeleton 模式會用到
       const [isTextDirty, setIsTextDirty] = useState(false);
       const [showRealPath, setShowRealPath] = useState(false);
       const [cachedTextBody, setCachedTextBody] = useState(null);
       const [isGeneratingText, setIsGeneratingText] = useState(false);
+      
+      // 字型解析專用狀態 (只有 outline 模式會用到)
+      const [opentypeFont, setOpentypeFont] = useState(null);
+      const [fontName, setFontName] = useState('載入中...');
+
+      // 初次載入線上預設英文字體 (Fredoka One - 圓潤可愛風)
+      useEffect(() => {
+          window.opentype.load('https://cdn.jsdelivr.net/npm/@fontsource/fredoka-one/files/fredoka-one-latin-400-normal.woff', (err, font) => {
+              if (err) {
+                  console.error('預設字體載入失敗', err);
+                  setFontName('載入失敗');
+              } else {
+                  setOpentypeFont(font);
+                  setFontName('線上預設 (Fredoka One)');
+              }
+          });
+      }, []);
+
+      // 處理本機字型上傳
+      const handleFontUpload = (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = (event) => {
+              try {
+                  const font = window.opentype.parse(event.target.result);
+                  setOpentypeFont(font);
+                  const name = font.names.fontFamily ? font.names.fontFamily.en : file.name;
+                  setFontName(`本機字型 (${name})`);
+                  setIsTextDirty(true);
+              } catch (err) {
+                  alert('字型解析失敗，請確認檔案格式是否為標準 TTF/OTF/WOFF。');
+                  console.error(err);
+              }
+          };
+          reader.readAsArrayBuffer(file);
+      };
 
       useEffect(() => {
           if (config.axis === 'TEXT') setIsTextDirty(true);
-      }, [textInput, textHeight, textSpacing, config.startCoord]);
+      }, [textInput, textHeight, textSpacing, textStyle, config.startCoord]);
 
       const handleGenerateText = async () => {
           if (!textInput || !config.startCoord) return;
+          if (textStyle === 'outline' && !opentypeFont) return alert('請先等待線上字型載入或手動上傳字型！');
+          
           const match = config.startCoord.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
           if (!match) return alert('請輸入有效的起點座標格式！');
           const lat = parseFloat(match[1]); const lon = parseFloat(match[2]);
 
           setIsGeneratingText(true);
-          const body = await generateTextPathEngine(textInput, lat, lon, parseFloat(textHeight), parseFloat(textSpacing));
-          setCachedTextBody(body);
-          setIsTextDirty(false);
-          setIsGeneratingText(false);
+          
+          setTimeout(async () => {
+              try {
+                  let body;
+                  if (textStyle === 'skeleton') {
+                      body = await generateSkeletonPathEngine(textInput, lat, lon, parseFloat(textHeight), parseFloat(textSpacing));
+                  } else {
+                      body = await generateOutlinePathEngine(textInput, lat, lon, parseFloat(textHeight), opentypeFont);
+                  }
+                  
+                  setCachedTextBody(body);
+                  setIsTextDirty(false);
+                  setIsGeneratingText(false);
 
-          // 修正：加上微小延遲 (100ms)，確保 React 先把線條畫在圖層上後，再呼叫置中，避免被重繪動作打斷
-          setTimeout(() => {
-              if (mapRef.current && body.flatContinuousPath.length > 0) {
-                  const angle = config.angle || 0;
-                  const rotatedFlatPath = rotatePoints(body.flatContinuousPath, lat, lon, angle);
-                  
-                  const bounds = L.latLngBounds(rotatedFlatPath.map(p => [
-                      Array.isArray(p) ? p[0] : p.lat, 
-                      Array.isArray(p) ? p[1] : p.lon
-                  ]));
-                  
-                  // 改回最穩定的 fitBounds，與「生成並置中預覽」行為一致
-                  mapRef.current.fitBounds(bounds, { padding: [30, 30] });
+                  // 延遲置中，確保繪製完成
+                  setTimeout(() => {
+                      if (mapRef.current && body.flatContinuousPath.length > 0) {
+                          const angle = config.angle || 0;
+                          const rotatedFlatPath = rotatePoints(body.flatContinuousPath, lat, lon, angle);
+                          const bounds = L.latLngBounds(rotatedFlatPath.map(p => [
+                              Array.isArray(p) ? p[0] : p.lat, 
+                              Array.isArray(p) ? p[1] : p.lon
+                          ]));
+                          mapRef.current.fitBounds(bounds, { padding: [30, 30] });
+                      }
+                  }, 100);
+              } catch (e) {
+                  console.error(e);
+                  alert('產生文字路徑時發生錯誤：' + e.message);
+                  setIsGeneratingText(false);
               }
-          }, 100);
+          }, 50);
       };
-      // --- 文字專用狀態結束 ---
 
       const generateGrid = useCallback((overrideConfig = null, autoFit = true) => {
         setLoading(true);
@@ -1270,19 +1384,52 @@
 
               {config.axis === 'TEXT' ? (
                 <div className="space-y-3 mb-4">
+                  {/* 風格大切換面板 */}
+                  <div className="flex rounded-lg border overflow-hidden transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600">
+                      <button onClick={() => setTextStyle('skeleton')} className={`flex-1 py-2 text-[11px] sm:text-xs font-bold transition-colors ${textStyle==='skeleton' ? (isDark ? 'bg-amber-600 text-white' : 'bg-amber-500 text-slate-900 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-stone-600 hover:bg-stone-300')}`}><i className="fas fa-pen-nib mr-1.5"></i> 單線草寫骨架 (省時)</button>
+                      <button onClick={() => setTextStyle('outline')} className={`flex-1 py-2 text-[11px] sm:text-xs font-bold transition-colors ${textStyle==='outline' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-stone-600 hover:bg-stone-300')}`}><i className="fas fa-font mr-1.5"></i> 粗體外框剪影 (藝術)</button>
+                  </div>
+
+                  {/* 全新字型設定面板 (僅在 outline 模式顯示) */}
+                  {textStyle === 'outline' && (
+                      <div className={`p-3 rounded-lg border transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-blue-50 border-blue-200'}`}>
+                          <h3 className={`text-xs font-bold mb-2 flex items-center ${isDark ? 'text-blue-400' : 'text-blue-800'}`}>
+                              <i className="fas fa-font mr-1.5"></i> 字型設定 (支援中文字型檔)
+                          </h3>
+                          <div className="flex flex-col sm:flex-row items-center gap-2">
+                              <div className="flex-1 w-full min-w-0">
+                                  <span className={`block text-xs font-mono p-2 border rounded font-bold truncate transition-colors duration-300 ${fontName.includes('本機') ? (isDark ? 'bg-emerald-900/50 text-emerald-400 border-emerald-700' : 'bg-white text-emerald-600 border-emerald-300') : (isDark ? 'bg-slate-800 text-blue-400 border-slate-600' : 'bg-white text-blue-600 border-blue-300')}`}>
+                                      {fontName}
+                                  </span>
+                              </div>
+                              <div className="relative w-full sm:w-auto shrink-0">
+                                  <input type="file" accept=".ttf, .otf, .woff" onChange={handleFontUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                  <button className={`w-full sm:w-auto font-bold px-4 py-2 rounded shadow-sm text-xs flex items-center justify-center gap-2 transition-colors ${isDark ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
+                                      <i className="fas fa-folder-open"></i> 讀取本機字型
+                                  </button>
+                              </div>
+                          </div>
+                      </div>
+                  )}
+
                   <div>
                       <label className="text-xs text-stone-500 block mb-1.5">欲生成的文字 (支援中英數)</label>
-                      <input type="text" value={textInput} onChange={(e) => setTextInput(e.target.value)} placeholder="如: 2330" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} />
+                      <input type="text" value={textInput} onChange={(e) => setTextInput(e.target.value)} placeholder="如:皮克敏 Pikmin (中文請先掛載本機字型)" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} />
                   </div>
-                  <div className="grid grid-cols-3 gap-3">
+                  
+                  <div className={`grid ${textStyle === 'skeleton' ? 'grid-cols-3' : 'grid-cols-2'} gap-3`}>
                       <div>
                           <label className="text-xs text-stone-500 block mb-1.5">字高 (公尺)</label>
                           <input type="number" value={textHeight} onChange={(e) => setTextHeight(e.target.value)} className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} />
                       </div>
-                      <div>
-                          <label className="text-xs text-stone-500 block mb-1.5">字距 (公尺)</label>
-                          <input type="number" value={textSpacing} onChange={(e) => setTextSpacing(e.target.value)} className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} />
-                      </div>
+                      
+                      {textStyle === 'skeleton' && (
+                          <div>
+                              <label className="text-xs text-stone-500 block mb-1.5">字距 (公尺)</label>
+                              <input type="number" value={textSpacing} onChange={(e) => setTextSpacing(e.target.value)} className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} />
+                          </div>
+                      )}
+                      
                       <div>
                           <label className="text-xs text-stone-500 block mb-1.5">時速 (km/h)</label>
                           <input type="number" value={config.speedKmH} onChange={(e) => setConfig({...config, speedKmH: e.target.value})} className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-stone-200 border-stone-300 focus:border-stone-400 text-stone-800 focus:bg-stone-100'}`} />
@@ -1296,11 +1443,11 @@
                       </label>
                   </div>
 
-                  <button onClick={handleGenerateText} disabled={isGeneratingText} className={`w-full py-2.5 rounded-lg text-sm font-bold shadow-sm transition-colors flex items-center justify-center ${isGeneratingText ? (isDark ? 'bg-slate-700 text-slate-400' : 'bg-stone-200 text-stone-500') : isTextDirty ? 'bg-blue-600 hover:bg-blue-500 text-white' : (isDark ? 'bg-slate-700 text-slate-400' : 'bg-stone-200 text-stone-500')}`}>
+                  <button onClick={handleGenerateText} disabled={isGeneratingText} className={`w-full py-2.5 rounded-lg text-sm font-bold shadow-sm transition-colors flex items-center justify-center ${isGeneratingText ? (isDark ? 'bg-slate-700 text-slate-400' : 'bg-stone-200 text-stone-500') : isTextDirty ? (textStyle === 'skeleton' ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white') : (isDark ? 'bg-slate-700 text-slate-400' : 'bg-stone-200 text-stone-500')}`}>
                       {isGeneratingText ? (
                           <span><i className="fas fa-spinner fa-spin mr-2"></i> 演算資料中...</span>
                       ) : isTextDirty ? (
-                          <span><i className="fas fa-search-location mr-2 text-amber-300"></i> ✨ 生成文字並置中預覽</span>
+                          <span><i className="fas fa-search-location mr-2 text-yellow-300"></i> ✨ 演算{textStyle === 'skeleton' ? '骨架' : '外框'}路徑並預覽</span>
                       ) : (
                           <span><i className="fas fa-check mr-2"></i> ✓ 已是最新路徑 (可調整下方旋轉)</span>
                       )}
@@ -1715,7 +1862,7 @@
                 <i className={`fab fa-neos text-3xl ${isDark ? 'text-emerald-400' : 'text-stone-800'}`}></i>
                 <div>
                   <h1 className={`text-xl font-black tracking-wider uppercase ${isDark ? 'text-white' : 'text-stone-800'}`}>PIKMIN NAVIGATOR</h1>
-                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-stone-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V37<span className="border px-1.5 py-0.5 rounded-sm text-[10px] font-bold shadow-sm transition-colors duration-300 bg-stone-200 dark:bg-blue-600 text-stone-700 dark:text-white border-stone-300 dark:border-transparent">寫字測試中</span></p>
+                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-stone-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V38<span className="border px-1.5 py-0.5 rounded-sm text-[10px] font-bold shadow-sm transition-colors duration-300 bg-stone-200 dark:bg-blue-600 text-stone-700 dark:text-white border-stone-300 dark:border-transparent">寫字測試中</span></p>
                 </div>
               </div>
               <div className="flex rounded-lg p-1.5 border w-full sm:w-auto mt-3 sm:mt-0 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700 overflow-x-auto custom-scrollbar">
