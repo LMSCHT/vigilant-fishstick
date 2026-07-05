@@ -1386,8 +1386,8 @@
                 <div className="space-y-3 mb-4">
                   {/* 風格大切換面板 */}
                   <div className="flex rounded-lg border overflow-hidden transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600">
-                      <button onClick={() => setTextStyle('skeleton')} className={`flex-1 py-2 text-[11px] sm:text-xs font-bold transition-colors ${textStyle==='skeleton' ? (isDark ? 'bg-amber-600 text-white' : 'bg-amber-500 text-slate-900 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-stone-600 hover:bg-stone-300')}`}><i className="fas fa-pen-nib mr-1.5"></i> 單線草寫骨架 (省時)</button>
-                      <button onClick={() => setTextStyle('outline')} className={`flex-1 py-2 text-[11px] sm:text-xs font-bold transition-colors ${textStyle==='outline' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-stone-600 hover:bg-stone-300')}`}><i className="fas fa-font mr-1.5"></i> 粗體外框剪影 (藝術)</button>
+                      <button onClick={() => setTextStyle('skeleton')} className={`flex-1 py-2 text-[11px] sm:text-xs font-bold transition-colors ${textStyle==='skeleton' ? (isDark ? 'bg-amber-600 text-white' : 'bg-amber-500 text-slate-900 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-stone-600 hover:bg-stone-300')}`}><i className="fas fa-pen-nib mr-1.5"></i> 單線骨架</button>
+                      <button onClick={() => setTextStyle('outline')} className={`flex-1 py-2 text-[11px] sm:text-xs font-bold transition-colors ${textStyle==='outline' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-600 text-white shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-stone-600 hover:bg-stone-300')}`}><i className="fas fa-font mr-1.5"></i> 外框剪影</button>
                   </div>
 
                   {/* 全新字型設定面板 (僅在 outline 模式顯示) */}
