@@ -61,19 +61,29 @@
   <script type="text/babel">
     // --- 【新增 1】：文字路徑雙引擎 (Hanzi + Borel) 核心工具箱 ---
     
-    // Hanzi Writer 快取，避免重複請求
+    // Hanzi Writer 快取，避免重複請求 (加入 3 秒超時防呆保護)
     const HanziCache = {};
-    const fetchHanziChar = async (char) => {
+    const fetchHanziChar = async (char, timeoutMs = 3000) => {
         if (HanziCache[char]) return HanziCache[char];
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        
         try {
-            const response = await fetch(`https://cdn.jsdelivr.net/npm/hanzi-writer-data@2.0.1/${char}.json`);
+            const response = await fetch(`https://cdn.jsdelivr.net/npm/hanzi-writer-data@2.0.1/${char}.json`, { signal: controller.signal });
             if (!response.ok) return null;
             const data = await response.json();
             HanziCache[char] = data;
             return data;
         } catch (e) {
-            console.error(`無法取得字元 ${char} 的資料`, e);
+            if (e.name === 'AbortError') {
+                console.warn(`取得字元 [${char}] 的資料超時 (${timeoutMs}ms)`);
+            } else {
+                console.error(`無法取得字元 [${char}] 的資料`, e);
+            }
             return null;
+        } finally {
+            clearTimeout(timeoutId);
         }
     };
 
@@ -437,23 +447,42 @@
         setLoading(true);
         setTimeout(() => {
           try {
+            // 1. 預運算距離矩陣 (Precompute Distance Matrix)
+            const n = points.length;
+            const ptIndexMap = new Map();
+            points.forEach((p, idx) => ptIndexMap.set(p.id, idx));
+            
+            const distMatrix = Array(n).fill(0).map(() => Array(n).fill(0));
+            for (let i = 0; i < n; i++) {
+              for (let j = i + 1; j < n; j++) {
+                const d = calcDistanceKm(points[i], points[j]);
+                distMatrix[i][j] = d;
+                distMatrix[j][i] = d;
+              }
+            }
+            
+            // O(1) 快速查表函式
+            const fastDist = (p1, p2) => distMatrix[ptIndexMap.get(p1.id)][ptIndexMap.get(p2.id)];
+
+            // 2. 貪婪演算法找初始路徑 (使用 fastDist)
             let unv = [...points]; let cur = unv.shift(); let opt = [cur];
             while (unv.length > 0) {
               let nIdx = 0; let minD = Infinity;
               for (let i = 0; i < unv.length; i++) {
-                const dist = calcDistanceKm(cur, unv[i]);
+                const dist = fastDist(cur, unv[i]);
                 if (dist < minD) { minD = dist; nIdx = i; }
               }
               cur = unv[nIdx]; opt.push(cur); unv.splice(nIdx, 1);
             }
 
+            // 3. 2-opt 交叉解纏 (使用 fastDist)
             let improved = true;
             while (improved) {
               improved = false;
               for (let i = 1; i < opt.length - 2; i++) {
                 for (let j = i + 1; j < opt.length - 1; j++) {
-                  const d1 = calcDistanceKm(opt[i-1], opt[i]) + calcDistanceKm(opt[j], opt[j+1]);
-                  const d2 = calcDistanceKm(opt[i-1], opt[j]) + calcDistanceKm(opt[i], opt[j+1]);
+                  const d1 = fastDist(opt[i-1], opt[i]) + fastDist(opt[j], opt[j+1]);
+                  const d2 = fastDist(opt[i-1], opt[j]) + fastDist(opt[i], opt[j+1]);
                   if (d2 < d1) {
                     const rev = opt.slice(i, j + 1).reverse();
                     opt.splice(i, j - i + 1, ...rev);
@@ -462,6 +491,7 @@
                 }
               }
             }
+            
             setPoints(calcDirs(opt));
             setToastMsg('✨ 2-opt 交叉解纏演算法 最佳化完成！');
             setTimeout(() => setToastMsg(''), 3000);
