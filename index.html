@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>皮克敏路徑指揮中心</title> 
-  
+  <title>皮克敏路徑指揮中心</title>
+
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -12,16 +12,16 @@
       darkMode: 'class',
     }
   </script>
-  
+
   <!-- FontAwesome -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  
+
   <!-- 【CDN 穩定切換】Leaflet 地圖與繪圖核心套件 -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css" />
   <script src="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
-  
+
   <!-- 引入 opentype.js 解析真實字型外框 -->
   <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 
@@ -59,13 +59,14 @@
   </style>
 </head>
 <body>
+  
   <!-- 隱藏的 SVG 容器，用於原生的 SVG 外框路徑採樣 -->
   <svg id="hidden-svg" xmlns="http://www.w3.org/2000/svg" style="position: absolute; width: 0; height: 0; overflow: hidden; opacity: 0;"></svg>
   <div id="root"></div>
 
   <script type="text/babel">
     // --- 全新核心：文字路徑雙引擎 (Skeleton + Outline) ---
-    
+
     // 引擎 1：單線草寫骨架所需的工具
     const HanziCache = {};
     const fetchHanziChar = async (char, timeoutMs = 3000) => {
@@ -209,20 +210,17 @@
         hiddenSvg.appendChild(path);
         const length = path.getTotalLength();
         if (length === 0) { hiddenSvg.removeChild(path); return []; }
-
         const points = [];
         for (let i = 0; i <= length; i += resolution) {
-            const pt = path.getPointAtLength(i);
-            points.push({ x: pt.x, y: pt.y });
+            const pt = path.getPointAtLength(i); points.push({ x: pt.x, y: pt.y });
         }
         if (length % resolution !== 0) {
-            const pt = path.getPointAtLength(length);
-            points.push({ x: pt.x, y: pt.y });
+            const pt = path.getPointAtLength(length); points.push({ x: pt.x, y: pt.y });
         }
-        hiddenSvg.removeChild(path);
-        return points;
+        hiddenSvg.removeChild(path); return points;
     };
-
+    // --- 工具箱結束 ---
+    
     const generateOutlinePathEngine = (text, startLat, startLon, sizeMeters, opentypeFont) => {
         return new Promise((resolve, reject) => {
             try {
@@ -282,6 +280,7 @@
             }
         });
     };
+
     const { useState, useMemo, useRef, useEffect, useCallback } = React;
 
     const CONSTANTS = {
@@ -301,22 +300,93 @@
     const rotatePoints = (points, centerLat, centerLon, angleDeg) => {
         if (angleDeg === 0) return points;
         const angleRad = angleDeg * (Math.PI / 180);
-        const cosA = Math.cos(angleRad);
-        const sinA = Math.sin(angleRad);
+        const cosA = Math.cos(angleRad); const sinA = Math.sin(angleRad);
         const lonToM = getLonToMeters(centerLat);
-
         return points.map(p => {
-            const ptLat = Array.isArray(p) ? p[0] : p.lat;
-            const ptLon = Array.isArray(p) ? p[1] : p.lon;
-            const dx = (ptLon - centerLon) * lonToM;
-            const dy = (ptLat - centerLat) * CONSTANTS.LAT_TO_M;
-            const rx = dx * cosA - dy * sinA;
-            const ry = dx * sinA + dy * cosA;
+            const ptLat = Array.isArray(p) ? p[0] : p.lat; const ptLon = Array.isArray(p) ? p[1] : p.lon;
+            const dx = (ptLon - centerLon) * lonToM; const dy = (ptLat - centerLat) * CONSTANTS.LAT_TO_M;
+            const rx = dx * cosA - dy * sinA; const ry = dx * sinA + dy * cosA;
             const rLat = centerLat + (ry / CONSTANTS.LAT_TO_M);
             const rLon = centerLon + (rx / lonToM);
             return [rLat, rLon]; 
         });
     };
+
+    // --- 新增：極限拉果演算工具箱 (碰撞解析引擎) ---
+    const distToSegment = (p, v, w) => {
+        const l2 = (v.x - w.x)**2 + (v.y - w.y)**2;
+        if (l2 === 0) return { dist: Math.hypot(p.x - v.x, p.y - v.y), closest: {x: v.x, y: v.y} };
+        let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+        t = Math.max(0, Math.min(1, t));
+        const closest = { x: v.x + t * (w.x - v.x), y: v.y + t * (w.y - v.y) };
+        return { dist: Math.hypot(p.x - closest.x, p.y - closest.y), closest: closest };
+    };
+
+    const resolveCollisions = (localPath, localFlowers, safeR, targetR) => {
+        let path = [...localPath];
+        let maxIters = 50; 
+        let changed = true;
+        for (let iter = 0; iter < maxIters && changed; iter++) {
+            changed = false;
+            let newPath = [];
+            for (let i = 0; i < path.length - 1; i++) {
+                let p1 = path[i]; let p2 = path[i+1];
+                newPath.push(p1);
+                let worstFlower = null, worstDist = Infinity, worstClosestPt = null;
+                for (let f of localFlowers) {
+                    let info = distToSegment(f, p1, p2);
+                    if (info.dist < safeR && info.dist < worstDist) { worstDist = info.dist; worstFlower = f; worstClosestPt = info.closest; }
+                }
+                if (worstFlower) {
+                    let dx = worstClosestPt.x - worstFlower.x; let dy = worstClosestPt.y - worstFlower.y;
+                    let len = Math.hypot(dx, dy);
+                    if (len < 1e-3) { dx = -(p2.y - p1.y); dy = p2.x - p1.x; len = Math.hypot(dx, dy); }
+                    let nx = dx / len, ny = dy / len;
+                    newPath.push({ x: worstFlower.x + nx * targetR, y: worstFlower.y + ny * targetR, isResolved: true });
+                    changed = true;
+                }
+            }
+            newPath.push(path[path.length - 1]); path = newPath;
+        }
+        return path;
+    };
+
+    const calcFruitOffsetPath = (points, targetOffset, sideStr) => {
+        if (points.length < 2) return points.map(p => ({ lat: p.lat, lon: p.lon, isResolved: false }));
+        const sign = sideStr === 'R' ? -1 : 1; 
+        const refLat = points[0].lat; const refLon = points[0].lon;
+        const lonToM = getLonToMeters(refLat);
+        const localFlowers = points.map(p => ({ x: (p.lon - refLon) * lonToM, y: (p.lat - refLat) * CONSTANTS.LAT_TO_M }));
+
+        let localPath = [];
+        const n = localFlowers.length;
+        for (let i = 0; i < n; i++) {
+            let tangent = { x: 0, y: 0 };
+            if (i === 0) {
+                const dx = localFlowers[1].x - localFlowers[0].x; const dy = localFlowers[1].y - localFlowers[0].y;
+                const len = Math.hypot(dx, dy); tangent = { x: dx/len, y: dy/len };
+            } else if (i === n - 1) {
+                const dx = localFlowers[n-1].x - localFlowers[n-2].x; const dy = localFlowers[n-1].y - localFlowers[n-2].y;
+                const len = Math.hypot(dx, dy); tangent = { x: dx/len, y: dy/len };
+            } else {
+                const dx1 = localFlowers[i].x - localFlowers[i-1].x; const dy1 = localFlowers[i].y - localFlowers[i-1].y;
+                const len1 = Math.hypot(dx1, dy1); const vIn = { x: dx1/len1, y: dy1/len1 };
+                const dx2 = localFlowers[i+1].x - localFlowers[i].x; const dy2 = localFlowers[i+1].y - localFlowers[i].y;
+                const len2 = Math.hypot(dx2, dy2); const vOut = { x: dx2/len2, y: dy2/len2 };
+                tangent = { x: vIn.x + vOut.x, y: vIn.y + vOut.y };
+                const tLen = Math.hypot(tangent.x, tangent.y);
+                tangent = tLen < 1e-6 ? { x: vIn.x, y: vIn.y } : { x: tangent.x/tLen, y: tangent.y/tLen };
+            }
+            let nx = tangent.y * sign; let ny = -tangent.x * sign;
+            localPath.push({ x: localFlowers[i].x + nx * targetOffset, y: localFlowers[i].y + ny * targetOffset, isResolved: false });
+        }
+        
+        const SAFE_R = 45; // 絕對禁區 40m + 5m 防卡緩衝
+        const safeLocalPath = resolveCollisions(localPath, localFlowers, SAFE_R, targetOffset);
+
+        return safeLocalPath.map(p => ({ lat: refLat + p.y / CONSTANTS.LAT_TO_M, lon: refLon + p.x / lonToM, isResolved: p.isResolved }));
+    };
+    // --- 結束：採果演算法 ---
 
     const getTimestamp = () => {
       const d = new Date();
@@ -348,6 +418,7 @@
       return [value, setValue];
     }
 
+    // --- SVG Map Interaction Hook ---
     function useInteractiveMap(svgRef, transformRef, setTransform) {
       useEffect(() => {
         const svg = svgRef.current; if (!svg) return;
@@ -427,6 +498,7 @@
       }, []); 
     }
 
+    // --- 【子元件：模式一 精準控花】 ---
     function Mode1({ isDark }) {
       const DIRECTIONS = { 'NW_SE': 'A (左上進)', 'SW_NE': 'B (左下進)', 'NE_SW': 'C (右上進)', 'SE_NW': 'D (右下進)' };
       const ANGLES = [{value:0,label:'0°(直)'},{value:45,label:'45°'},{value:90,label:'90°(橫)'},{value:135,label:'135°'},{value:180,label:'180°'},{value:225,label:'225°'},{value:270,label:'270°'},{value:315,label:'315°'}];
@@ -436,6 +508,8 @@
       const [rawInput, setRawInput] = useStickyState('', 'pikmin_v34_m1_input');
       const [speedKmH, setSpeedKmH] = useStickyState(18, 'pikmin_v34_m1_speed');
       const [patternType, setPatternType] = useStickyState('O', 'pikmin_v34_m1_pattern');
+      const [harvestDist, setHarvestDist] = useStickyState(55, 'pikmin_v38_m1_harvest');
+      const [offsetSide, setOffsetSide] = useStickyState('R', 'pikmin_v38_m1_offside');
       
       const [points, setPoints] = useState([]);
       const [outputs, setOutputs] = useState({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '', pureGpx: '', pureCsv: '' });
@@ -522,11 +596,9 @@
             for (let i = 0; i < n; i++) {
               for (let j = i + 1; j < n; j++) {
                 const d = calcDistanceKm(points[i], points[j]);
-                distMatrix[i][j] = d;
-                distMatrix[j][i] = d;
+                distMatrix[i][j] = d; distMatrix[j][i] = d;
               }
             }
-            
             const fastDist = (p1, p2) => distMatrix[ptIndexMap.get(p1.id)][ptIndexMap.get(p2.id)];
 
             let unv = [...points]; let cur = unv.shift(); let opt = [cur];
@@ -597,10 +669,7 @@
 
             outAngle += (angle * Math.PI) / 180;
             const arrivalAngle = inAngle + Math.PI; 
-            
-            const POINT_COUNT = 32;
-            const ANGLE_STEP = (2 * Math.PI) / POINT_COUNT;
-            
+            const POINT_COUNT = 32; const ANGLE_STEP = (2 * Math.PI) / POINT_COUNT;
             const cwP1 = outAngle - (POINT_COUNT - 1) * ANGLE_STEP;  
             const ccwP1 = outAngle + (POINT_COUNT - 1) * ANGLE_STEP; 
             
@@ -642,17 +711,12 @@
         }
       };
 
-      const getFrtPt = (pt, i) => {
-        const dist = 18 + ((pt.id * 7) % 8); const rad = (pt.id * 137.5) * (Math.PI / 180);
-        return { l: pt.lat + (dist*Math.sin(rad))/CONSTANTS.LAT_TO_M, n: pt.lon + (dist*Math.cos(rad))/(getLonToMeters(pt.lat)) };
-      };
-
       const generate = useCallback(() => {
         if (!points.length) return;
         setLoading(true);
         setTimeout(() => {
           try {
-            let pGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V36">\n  <trk><name>Planting_${patternType}</name><trkseg>\n`;
+            let pGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38">\n  <trk><name>Planting_${patternType}</name><trkseg>\n`;
             let pCsv = '';
             points.forEach((pt, idx) => {
               const np = `F${String(idx + 1).padStart(2, '0')}`;
@@ -663,16 +727,16 @@
             });
             pGpx += `  </trkseg></trk></gpx>`;
 
-            let fGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V36">\n  <trk><name>Fruit</name><trkseg>\n`;
+            let fGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38">\n  <trk><name>Fruit_Offset</name><trkseg>\n`;
             let fCsv = '';
-            points.forEach((pt, idx) => {
-              const fp = getFrtPt(pt, idx);
-              fGpx += `    <trkpt lat="${fp.l.toFixed(6)}" lon="${fp.n.toFixed(6)}"><name>Fruit_F${idx+1}</name></trkpt>\n`;
-              fCsv += `${fp.l.toFixed(6)}, ${fp.n.toFixed(6)}\n`;
+            const offsetPts = calcFruitOffsetPath(points, harvestDist, offsetSide);
+            offsetPts.forEach((fp, idx) => {
+              fGpx += `    <trkpt lat="${fp.lat.toFixed(6)}" lon="${fp.lon.toFixed(6)}"><name>Fruit_P${idx+1}</name></trkpt>\n`;
+              fCsv += `${fp.lat.toFixed(6)}, ${fp.lon.toFixed(6)}\n`;
             });
             fGpx += `  </trkseg></trk></gpx>`;
 
-            let puGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V36">\n  <trk><name>Pure_Flowers</name><trkseg>\n`;
+            let puGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38">\n  <trk><name>Pure_Flowers</name><trkseg>\n`;
             let puCsv = '';
             points.forEach((pt, idx) => {
               puGpx += `    <trkpt lat="${pt.lat.toFixed(6)}" lon="${pt.lon.toFixed(6)}"><name>F${idx+1}</name></trkpt>\n`;
@@ -688,7 +752,7 @@
             setLoading(false);
           }
         }, 10);
-      }, [points, patternType]);
+      }, [points, patternType, harvestDist, offsetSide]);
 
       useEffect(() => {
         if (points.length === 0) { setStats({ distKm: 0, timeMin: 0 }); return; }
@@ -724,23 +788,16 @@
               if (patternType !== 'O') {
                  const cur = points[i]; 
                  const dirs = ['NW_SE', 'SW_NE', 'NE_SW', 'SE_NW'];
-                 let bestDir = cur.dir;
-                 let minDist = distMeters;
-
+                 let bestDir = cur.dir; let minDist = distMeters;
                  for(const d of dirs) {
                      if (d === cur.dir) continue;
                      const testPts = getFlwPts({...cur, dir: d}, i, points);
                      const testExit = testPts[testPts.length - 1];
                      const testDist = calcDistanceM({lat: testExit.l, lon: testExit.n}, {lat: pEnter.l, lon: pEnter.n});
-                     
-                     if (testDist < minDist - 15) {
-                         minDist = testDist;
-                         bestDir = d;
-                     }
+                     if (testDist < minDist - 15) { minDist = testDist; bestDir = d; }
                  }
-
                  if (bestDir !== cur.dir) {
-                     warnings.push(`點 ${i+1} 往 點 ${i+2} 銜接較遠 (${Math.round(distMeters)}m)，建議點 ${i+1} 改為「${DIRECTIONS[bestDir]}」可縮短至 ${Math.round(minDist)}m！`);
+                     warnings.push(`點 ${i+1} 往 點 ${i+2} 銜接較遠 (${Math.round(distMeters)}m)，建議改為「${DIRECTIONS[bestDir]}」可縮短至 ${Math.round(minDist)}m！`);
                      break; 
                  }
               }
@@ -756,8 +813,12 @@
       const vData = useMemo(() => {
         if (!points.length) return null;
         let ml = Infinity, xl = -Infinity, mn = Infinity, xn = -Infinity;
-        const pPaths = points.map((pt, i) => getFlwPts(pt, i, points)); const fPaths = points.map((pt, i) => getFrtPt(pt, i));
-        [...pPaths.flat(), ...fPaths].forEach(p => { if(p.l<ml) ml=p.l; if(p.l>xl) xl=p.l; if(p.n<mn) mn=p.n; if(p.n>xn) xn=p.n; });
+        const pPaths = points.map((pt, i) => getFlwPts(pt, i, points)); 
+        const fPathsRaw = calcFruitOffsetPath(points, harvestDist, offsetSide);
+
+        [...pPaths.flat(), ...fPathsRaw.map(p => ({l: p.lat, n: p.lon}))].forEach(p => { 
+            if(p.l<ml) ml=p.l; if(p.l>xl) xl=p.l; if(p.n<mn) mn=p.n; if(p.n>xn) xn=p.n; 
+        });
         
         if (xl === ml) { xl += 0.0005; ml -= 0.0005; }
         if (xn === mn) { xn += 0.0005; mn -= 0.0005; }
@@ -781,8 +842,15 @@
         const c = { lat: midLat, lon: midLon }; 
         const rSafe = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + CONSTANTS.FLW_SAFE_RADIUS_M/CONSTANTS.LAT_TO_M, c.lon).y);
         const r40 = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + CONSTANTS.FLW_MAX_RADIUS_M/CONSTANTS.LAT_TO_M, c.lon).y);
-        return { toSVG, rSafe, r40, pPaths: pPaths.map(pth => pth.map(p => toSVG(p.l, p.n))), fPaths: fPaths.map(p => toSVG(p.l, p.n)) };
-      }, [points, patternType]);
+        const r45 = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + 45/CONSTANTS.LAT_TO_M, c.lon).y);
+        const rTarget = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + harvestDist/CONSTANTS.LAT_TO_M, c.lon).y);
+
+        return { 
+            toSVG, rSafe, r40, r45, rTarget, 
+            pPaths: pPaths.map(pth => pth.map(p => toSVG(p.l, p.n))), 
+            fPaths: fPathsRaw.map(p => ({ ...toSVG(p.lat, p.lon), isResolved: p.isResolved })) 
+        };
+      }, [points, patternType, harvestDist, offsetSide]);
 
       useInteractiveMap(svgRef, transformRef, setTransform);
       const resetZoom = () => setTransform({ k: 1, x: 0, y: 0 });
@@ -888,12 +956,32 @@
             </div>
 
             <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
+              
+              {/* --- 新增：超緊湊 🍎 採果微調面板 --- */}
+              <div className={`px-3 py-2.5 rounded-lg border mb-3 flex items-center justify-between transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-rose-50 border-rose-200'}`}>
+                  <div className={`text-xs font-bold flex items-center shrink-0 mr-3 ${isDark ? 'text-rose-400' : 'text-rose-700'}`}>
+                      <i className="fas fa-apple-alt mr-1.5"></i> 🍎 採果微調
+                  </div>
+                  
+                  <div className="flex-1 flex items-center gap-2 max-w-[200px]">
+                      <label className={`text-[10px] font-bold whitespace-nowrap hidden sm:block ${isDark ? 'text-slate-400' : 'text-rose-800'}`}>偏移距離:</label>
+                      <input type="range" min="30" max="70" value={harvestDist} onChange={(e)=>setHarvestDist(parseInt(e.target.value))} className="flex-1 accent-rose-500 h-1 bg-stone-300 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer" />
+                      <span className={`text-[10px] font-mono font-bold w-9 text-right shrink-0 ${isDark ? 'text-rose-400' : 'text-rose-700'}`}>{harvestDist}m</span>
+                  </div>
+
+                  <div className="flex rounded border overflow-hidden shrink-0 ml-3 transition-colors duration-300 bg-stone-200 dark:bg-slate-800 border-stone-300 dark:border-slate-600">
+                      <button onClick={()=>setOffsetSide('L')} className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${offsetSide==='L' ? 'bg-rose-500 text-white' : (isDark ? 'text-slate-400 hover:text-rose-400' : 'text-stone-500 hover:text-stone-700')}`}>左側</button>
+                      <button onClick={()=>setOffsetSide('R')} className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${offsetSide==='R' ? 'bg-rose-500 text-white' : (isDark ? 'text-slate-400 hover:text-rose-400' : 'text-stone-500 hover:text-stone-700')}`}>右側</button>
+                  </div>
+              </div>
+              {/* --- 面板結束 --- */}
+
               <button onClick={generate} disabled={loading} className={`w-full font-bold py-2.5 rounded-lg shadow-sm dark:shadow-lg mb-3 active:scale-95 transition text-sm disabled:opacity-50 ${theme.bg} ${isDark ? (patternType==='O'?'text-white':'text-slate-900') : 'text-white ' + theme.hoverBg}`}><i className="fas fa-play"></i> 產生雙路線</button>
               <div className="flex flex-wrap justify-between items-center mb-2 gap-2">
                  <div className="flex rounded p-1 flex-1 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border border-stone-300 dark:border-transparent">
                    <button onClick={()=>setOutputTab('pure')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='pure' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>純花點</button>
                    <button onClick={()=>setOutputTab('planting')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='planting' ? (isDark ? theme.bg + ' ' + (patternType==='O'?'text-white':'text-slate-900') : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>種植</button>
-                   <button onClick={()=>setOutputTab('fruit')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='fruit' ? (isDark ? 'bg-amber-500 text-slate-900' : 'bg-amber-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>採果</button>
+                   <button onClick={()=>setOutputTab('fruit')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='fruit' ? (isDark ? 'bg-rose-600 text-white' : 'bg-rose-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>採果</button>
                  </div>
                  <div className="flex rounded border overflow-hidden shrink-0 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600 shadow-none dark:shadow-inner">
                     <button onClick={()=>setOutputFormat('gpx')} className={`px-3 py-1.5 text-xs transition ${outputFormat==='gpx' ? (isDark ? 'bg-slate-600 text-white' : 'bg-stone-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
@@ -902,11 +990,11 @@
               </div>
               <div className="relative h-24 rounded border shadow-inner transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700">
                 <textarea className={`w-full h-full bg-transparent text-xs p-3 custom-scrollbar outline-none font-mono ${theme.outputText}`} readOnly value={currentOut} placeholder="等待生成..."></textarea>
-                {currentOut && <div className="absolute bottom-2 right-2 flex gap-1.5"><button onClick={copyGPX} className="p-1.5 rounded active:scale-95 transition bg-stone-100 dark:bg-slate-700 border border-stone-300 dark:border-transparent text-stone-600 dark:text-white hover:bg-stone-200 dark:hover:bg-slate-600"><i className={`fas ${copied?`fa-check ${isDark ? theme.text : 'text-emerald-600'}`:`fa-copy ${isDark ? 'text-white' : 'text-stone-600'}`} text-sm`}></i></button><button onClick={dlGPX} className={`text-white px-3 py-1.5 rounded text-sm font-bold active:scale-95 transition shadow-sm ${theme.bg} ${isDark ? '' : theme.hoverBg}`}><i className="fas fa-download"></i></button></div>}
+                {currentOut && <div className="absolute bottom-2 right-2 flex gap-1.5"><button onClick={copyGPX} className={`p-1.5 rounded active:scale-95 transition ${isDark ? 'bg-slate-700 text-white' : 'bg-stone-100 border border-stone-300 text-stone-600 hover:bg-stone-200'}`}><i className={`fas ${copied?`fa-check ${isDark ? theme.text : 'text-emerald-600'}`:`fa-copy`} text-sm`}></i></button><button onClick={dlGPX} className={`text-white px-3 py-1.5 rounded text-sm font-bold active:scale-95 transition shadow-sm ${theme.bg} ${isDark ? '' : theme.hoverBg}`}><i className="fas fa-download"></i></button></div>}
               </div>
             </div>
           </div>
-
+          
           <div className="lg:col-span-8 rounded-xl border relative overflow-hidden min-h-[50vh] lg:h-full flex flex-col pb-4 transition-colors duration-300 bg-stone-100 dark:bg-slate-800/50 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-2xl z-10">
             <div className="absolute top-3 left-3 z-10 flex gap-2 pointer-events-none w-full pr-6">
               <span className={`px-3 py-2 rounded-lg text-xs border shadow-sm dark:shadow-md pointer-events-auto backdrop-blur flex items-center gap-1.5 font-bold transition-colors duration-300 bg-stone-100/90 dark:bg-slate-900/90 border-stone-300 dark:border-slate-700 text-stone-800 dark:text-white`}><i className={`fas fa-${patternType==='O'?'sync text-purple-600':patternType==='S'?'leaf text-emerald-600':'bolt text-amber-600'} ${isDark ? theme.icon : ''}`}></i><span className="hidden sm:inline">{patternType==='O'?'圓舞':patternType==='S'?'種花':'稀初'}</span></span>
@@ -924,6 +1012,9 @@
                     {vData.pPaths.map((p, i) => {
                       return (
                       <g key={`f${i}`}>
+                        <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.rTarget} fill="none" stroke="rgba(244, 63, 94, 0.4)" strokeWidth={1/transform.k} className="pointer-events-none"/>
+                        <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.r45} fill="rgba(16, 185, 129, 0.05)" stroke={isDark ? "rgba(16, 185, 129, 0.5)" : "rgba(16, 185, 129, 0.6)"} strokeWidth={1/transform.k} strokeDasharray="4,4" className="pointer-events-none"/>
+
                         <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.r40} fill={theme.hexMain} fillOpacity="0.05" stroke={isDark ? "#64748b" : "#d6d3d1"} strokeWidth={1.5/transform.k} strokeDasharray="5,5"/>
                         <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.rSafe} fill="none" stroke={isDark ? "#f59e0b" : "#d97706"} strokeWidth={1/transform.k} strokeDasharray="2,2" opacity={isDark ? "0.4" : "0.5"}/>
                         <circle 
@@ -942,10 +1033,20 @@
                         
                         <circle cx={p[0].x} cy={p[0].y} r={vData.rSafe*0.15} fill={isDark ? "#60a5fa" : "#2563eb"} className="pointer-events-none"/>
                         <circle cx={p[p.length-1].x} cy={p[p.length-1].y} r={vData.rSafe*0.15} fill={isDark ? "#f87171" : "#dc2626"} className="pointer-events-none"/>
-                        <circle cx={vData.fPaths[i].x} cy={vData.fPaths[i].y} r={vData.rSafe*0.15} fill={isDark ? "#e879f9" : "#c026d3"} className="pointer-events-none"/>
                       </g>)
                     })}
-                    <polyline points={vData.fPaths.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke={isDark ? "#e879f9" : "#c026d3"} strokeWidth={2.5/transform.k} strokeLinejoin="round" strokeLinecap="round" strokeDasharray="5,5" className="pointer-events-none"/>
+                    
+                    {vData.fPaths && vData.fPaths.length > 0 && (
+                      <polyline points={vData.fPaths.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke={isDark ? "#e11d48" : "#e11d48"} strokeWidth={3/transform.k} strokeLinejoin="round" strokeLinecap="round" className="pointer-events-none"/>
+                    )}
+                    
+                    {vData.fPaths && vData.fPaths.map((p, i) => {
+                      if (p.isResolved) {
+                        return <circle key={`f_res_${i}`} cx={p.x} cy={p.y} r={6/transform.k} fill="#f59e0b" stroke="#fef3c7" strokeWidth={1.5/transform.k} className="pointer-events-none"/>
+                      } else {
+                        return <circle key={`f_pt_${i}`} cx={p.x} cy={p.y} r={4/transform.k} fill="#f43f5e" className="pointer-events-none"/>
+                      }
+                    })}
                   </g>
                 </g>
               )}
@@ -961,7 +1062,7 @@
       const mapRef = useRef(null);
       const layerGroupRef = useRef(null);
       
-      const [config, setConfig] = useStickyState({ startCoord: '', width: '1.5', rows: '20', axis: 'LINE', sweepDir: 'R', advDir: 'F', speedKmH: 18, angle: 0, layers: 1 }, 'pikmin_v36_m2_config');
+      const [config, setConfig] = useStickyState({ startCoord: '', width: '1.5', rows: '20', axis: 'LINE', sweepDir: 'R', advDir: 'F', speedKmH: 18, angle: 0, layers: 1 }, 'pikmin_v37_m2_config');
       const configRef = useRef(config);
       useEffect(() => { configRef.current = config; }, [config]);
 
@@ -1503,7 +1604,7 @@
             <div className="flex-1 p-4 rounded-xl border flex flex-col min-h-[250px] transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
               <div className="flex flex-wrap justify-between items-center gap-2 mb-3 shrink-0">
                 <h2 className={`text-sm sm:text-base font-bold ${isDark ? 'text-blue-400' : 'text-stone-800'}`}>輸出結果</h2>
-                <div className="flex rounded border overflow-hidden transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700">
+                 <div className="flex rounded border overflow-hidden shrink-0 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600 shadow-none dark:shadow-inner">
                     <button onClick={()=>setOutputFormat('gpx')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='gpx' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
                     <button onClick={()=>setOutputFormat('csv')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='csv' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>座標</button>
                 </div>
@@ -1538,8 +1639,8 @@
       const drawnLayerRef = useRef(null);
       const resultLayerGroupRef = useRef(null);
 
-      const [s2Level, setS2Level] = useStickyState('17', 'pikmin_v34_m3_level');
-      const [pathMode, setPathMode] = useStickyState('vertical-ew', 'pikmin_v34_m3_pathmode');
+      const [s2Level, setS2Level] = useStickyState('17', 'pikmin_v37_m3_level');
+      const [pathMode, setPathMode] = useStickyState('vertical-ew', 'pikmin_v37_m3_pathmode');
       const [searchQuery, setSearchQuery] = useState('');
       const [drawnCoords, setDrawnCoords] = useState([]);
       const [pathData, setPathData] = useState([]);
@@ -1554,58 +1655,33 @@
         if (!mapRef.current) {
           const map = L.map('leaflet-map').setView([25.033, 121.565], 15); 
           mapRef.current = map;
-          
-          tileLayerRef.current = L.tileLayer(
-            'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-            { maxZoom: 19, attribution: '&copy; OpenStreetMap' }
-          ).addTo(map);
+          tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
 
-          map.pm.addControls({
-            position: 'topleft', drawCircle: false, drawCircleMarker: false,
-            drawPolyline: false, drawText: false, cutPolygon: false,
-            editMode: true, dragMode: true, removalMode: true, drawMarker: false
-          });
+          map.pm.addControls({ position: 'topleft', drawCircle: false, drawCircleMarker: false, drawPolyline: false, drawText: false, cutPolygon: false, editMode: true, dragMode: true, removalMode: true, drawMarker: false });
           map.pm.setLang('zh_tw');
-
           resultLayerGroupRef.current = L.layerGroup().addTo(map);
 
           map.on('pm:create', (e) => {
             if (drawnLayerRef.current) map.removeLayer(drawnLayerRef.current);
             drawnLayerRef.current = e.layer;
             setDrawnCoords(e.layer.getLatLngs()[0].map(p => [p.lat, p.lng]));
-
-            e.layer.on('pm:edit', () => {
-              setDrawnCoords(e.layer.getLatLngs()[0].map(p => [p.lat, p.lng]));
-            });
+            e.layer.on('pm:edit', () => { setDrawnCoords(e.layer.getLatLngs()[0].map(p => [p.lat, p.lng])); });
           });
 
           map.on('pm:remove', (e) => {
             if (e.layer === drawnLayerRef.current) {
-              drawnLayerRef.current = null;
-              setDrawnCoords([]);
-              setPathData([]);
-              setGpxOut(''); setCsvOut('');
-              setBadgeText('請在地圖上繪製範圍');
-              resultLayerGroupRef.current.clearLayers();
+              drawnLayerRef.current = null; setDrawnCoords([]); setPathData([]); setGpxOut(''); setCsvOut('');
+              setBadgeText('請在地圖上繪製範圍'); resultLayerGroupRef.current.clearLayers();
             }
           });
         }
-
-        return () => {
-          if (mapRef.current) {
-             mapRef.current.off();
-             mapRef.current.remove();
-             mapRef.current = null;
-          }
-        };
+        return () => { if (mapRef.current) { mapRef.current.off(); mapRef.current.remove(); mapRef.current = null; } };
       }, []);
 
       const pointInPolygon = (point, vs) => {
-        let x = point[0], y = point[1];
-        let inside = false;
+        let x = point[0], y = point[1]; let inside = false;
         for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
-          let xi = vs[i][0], yi = vs[i][1];
-          let xj = vs[j][0], yj = vs[j][1];
+          let xi = vs[i][0], yi = vs[i][1]; let xj = vs[j][0], yj = vs[j][1];
           let intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
           if (intersect) inside = !inside;
         }
@@ -1614,16 +1690,11 @@
 
       useEffect(() => {
         if (drawnCoords.length < 3) return;
-        setLoading(true);
-        setBadgeText('正在運算 S2 網格...');
-
+        setLoading(true); setBadgeText('正在運算 S2 網格...');
         setTimeout(() => {
           try {
             let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
-            drawnCoords.forEach(p => {
-              if(p[0] < minLat) minLat = p[0]; if(p[0] > maxLat) maxLat = p[0];
-              if(p[1] < minLng) minLng = p[1]; if(p[1] > maxLng) maxLng = p[1];
-            });
+            drawnCoords.forEach(p => { if(p[0] < minLat) minLat = p[0]; if(p[0] > maxLat) maxLat = p[0]; if(p[1] < minLng) minLng = p[1]; if(p[1] > maxLng) maxLng = p[1]; });
 
             const level = parseInt(s2Level, 10);
             const stepMap = { 16: 0.00020, 17: 0.00009, 18: 0.00005 };
@@ -1632,152 +1703,89 @@
             let discoveredCells = new Set();
             for(let lat = minLat; lat <= maxLat; lat += scanStep) {
               for(let lng = minLng; lng <= maxLng; lng += scanStep) {
-                if (pointInPolygon([lat, lng], drawnCoords)) {
-                  let key = window.S2.latLngToKey(lat, lng, level);
-                  discoveredCells.add(key);
-                }
+                if (pointInPolygon([lat, lng], drawnCoords)) discoveredCells.add(window.S2.latLngToKey(lat, lng, level));
               }
             }
 
-            let unsortedPoints = Array.from(discoveredCells).map(key => {
-              let latlng = window.S2.keyToLatLng(key);
-              return { lat: latlng.lat, lng: latlng.lng };
-            });
+            let unsortedPoints = Array.from(discoveredCells).map(key => { let latlng = window.S2.keyToLatLng(key); return { lat: latlng.lat, lng: latlng.lng }; });
 
             let finalPath = [];
             if (unsortedPoints.length > 0) {
                 let isVertical = pathMode.startsWith('vertical');
                 let primaryDesc = pathMode.endsWith('ew') || pathMode.endsWith('sn'); 
                 const tolerance = scanStep * 1.5; 
-
-                let getPrimary = p => isVertical ? p.lng : p.lat;
-                let getSecondary = p => isVertical ? p.lat : p.lng;
+                let getPrimary = p => isVertical ? p.lng : p.lat; let getSecondary = p => isVertical ? p.lat : p.lng;
 
                 unsortedPoints.sort((a, b) => primaryDesc ? getPrimary(b) - getPrimary(a) : getPrimary(a) - getPrimary(b));
 
                 let groups = []; let currentGroup = []; let lastPrimary = null;
                 for (let p of unsortedPoints) {
                   let primaryVal = getPrimary(p);
-                  if (lastPrimary === null || Math.abs(primaryVal - lastPrimary) < tolerance) {
-                    currentGroup.push(p);
-                  } else {
-                    groups.push(currentGroup);
-                    currentGroup = [p];
-                  }
-                  let sum = 0;
-                  for(let gp of currentGroup) sum += getPrimary(gp);
+                  if (lastPrimary === null || Math.abs(primaryVal - lastPrimary) < tolerance) { currentGroup.push(p); } 
+                  else { groups.push(currentGroup); currentGroup = [p]; }
+                  let sum = 0; for(let gp of currentGroup) sum += getPrimary(gp);
                   lastPrimary = sum / currentGroup.length;
                 }
                 if (currentGroup.length > 0) groups.push(currentGroup);
 
-                let reverseSecondary = false;
-                let defaultSecondaryDesc = isVertical ? true : false; 
-
+                let reverseSecondary = false; let defaultSecondaryDesc = isVertical ? true : false; 
                 groups.forEach(group => {
                   let desc = reverseSecondary ? !defaultSecondaryDesc : defaultSecondaryDesc;
                   group.sort((a, b) => desc ? getSecondary(b) - getSecondary(a) : getSecondary(a) - getSecondary(b));
-                  finalPath.push(...group);
-                  reverseSecondary = !reverseSecondary;
+                  finalPath.push(...group); reverseSecondary = !reverseSecondary;
                 });
             }
 
             setPathData(finalPath);
-            if (finalPath.length === 0) {
-              setBadgeText('範圍過小，未能涵蓋網格');
-              setGpxOut(''); setCsvOut('');
-              if (resultLayerGroupRef.current) resultLayerGroupRef.current.clearLayers();
-              setLoading(false);
-              return;
-            }
+            if (finalPath.length === 0) { setBadgeText('範圍過小，未能涵蓋網格'); setGpxOut(''); setCsvOut(''); if (resultLayerGroupRef.current) resultLayerGroupRef.current.clearLayers(); setLoading(false); return; }
 
-            let gpxStr = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V36_Mode3">\n  <trk><name>S2_Map_Sweep</name><trkseg>\n`;
-            let csvStr = '';
-            finalPath.forEach(p => {
-              gpxStr += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lng.toFixed(6)}"></trkpt>\n`;
-              csvStr += `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}\n`;
-            });
+            let gpxStr = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V37_Mode3">\n  <trk><name>S2_Map_Sweep</name><trkseg>\n`; let csvStr = '';
+            finalPath.forEach(p => { gpxStr += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lng.toFixed(6)}"></trkpt>\n`; csvStr += `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}\n`; });
             gpxStr += `  </trkseg></trk></gpx>`;
-            setGpxOut(gpxStr); setCsvOut(csvStr);
-            setBadgeText(`總計涵蓋 ${finalPath.length} 個 S2 網格`);
+            setGpxOut(gpxStr); setCsvOut(csvStr); setBadgeText(`總計涵蓋 ${finalPath.length} 個 S2 網格`);
 
-            const group = resultLayerGroupRef.current;
-            group.clearLayers();
+            const group = resultLayerGroupRef.current; group.clearLayers();
             finalPath.forEach((p, idx) => {
-              let marker = L.circleMarker([p.lat, p.lng], {
-                radius: 4, color: isDark ? '#60a5fa' : '#2563eb', fillColor: isDark ? '#3b82f6' : '#3b82f6',
-                fillOpacity: 1, weight: 1, pmIgnore: true
-              }).bindPopup(`網格順序: ${idx+1}`);
+              let marker = L.circleMarker([p.lat, p.lng], { radius: 4, color: isDark ? '#60a5fa' : '#2563eb', fillColor: isDark ? '#3b82f6' : '#3b82f6', fillOpacity: 1, weight: 1, pmIgnore: true }).bindPopup(`網格順序: ${idx+1}`);
               group.addLayer(marker);
             });
-            let polyline = L.polyline(finalPath.map(p => [p.lat, p.lng]), {
-              color: isDark ? '#60a5fa' : '#3b82f6', weight: 3, dashArray: '8, 8', opacity: 0.8, pmIgnore: true
-            });
+            let polyline = L.polyline(finalPath.map(p => [p.lat, p.lng]), { color: isDark ? '#60a5fa' : '#3b82f6', weight: 3, dashArray: '8, 8', opacity: 0.8, pmIgnore: true });
             group.addLayer(polyline);
 
-          } catch(err) {
-            console.error(err);
-            setBadgeText('運算發生錯誤');
-          } finally {
-            setLoading(false);
-          }
+          } catch(err) { console.error(err); setBadgeText('運算發生錯誤'); } finally { setLoading(false); }
         }, 50);
       }, [drawnCoords, s2Level, pathMode, isDark]);
 
       const searchLocation = async () => {
-        if (!searchQuery) return;
-        setLoading(true);
+        if (!searchQuery) return; setLoading(true);
         try {
           const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}`);
           const data = await response.json();
           if (data && data.length > 0) {
             const lat = parseFloat(data[0].lat); const lon = parseFloat(data[0].lon);
             if (mapRef.current) mapRef.current.flyTo([lat, lon], 16, { duration: 1.5 });
-          } else {
-            alert('找不到該地點，請嘗試其他關鍵字');
-          }
-        } catch (e) {
-          console.error('Search error:', e);
-        } finally {
-          setLoading(false);
-        }
+          } else { alert('找不到該地點，請嘗試其他關鍵字'); }
+        } catch (e) { console.error('Search error:', e); } finally { setLoading(false); }
       };
 
       const locateMe = () => {
-        if (!navigator.geolocation) return alert('您的瀏覽器不支援定位功能');
-        setLoading(true);
+        if (!navigator.geolocation) return alert('您的瀏覽器不支援定位功能'); setLoading(true);
         navigator.geolocation.getCurrentPosition(
           (position) => {
             const lat = position.coords.latitude; const lng = position.coords.longitude;
-            if (mapRef.current) mapRef.current.flyTo([lat, lng], 16, { duration: 1.5 });
-            setLoading(false);
+            if (mapRef.current) mapRef.current.flyTo([lat, lng], 16, { duration: 1.5 }); setLoading(false);
           },
-          (error) => {
-            alert('無法取得位置，請確認瀏覽器定位權限');
-            setLoading(false);
-          },
-          { enableHighAccuracy: true, timeout: 5000 }
+          (error) => { alert('無法取得位置，請確認瀏覽器定位權限'); setLoading(false); }, { enableHighAccuracy: true, timeout: 5000 }
         );
       };
 
       const currentOut = outputFormat === 'gpx' ? gpxOut : csvOut;
       const copyToClipboard = () => { 
-        if(!currentOut) return;
-        navigator.clipboard.writeText(currentOut).then(() => {
-           setCopied(true); setTimeout(()=>setCopied(false), 2000);
-        });
+        if(!currentOut) return; navigator.clipboard.writeText(currentOut).then(() => { setCopied(true); setTimeout(()=>setCopied(false), 2000); });
       };
-      
       const dlGPX = () => { 
-        if(!currentOut) return;
-        const ext = outputFormat === 'gpx' ? 'gpx' : 'txt';
-        const mime = outputFormat === 'gpx' ? 'text/xml' : 'text/plain';
-        const ts = getTimestamp();
-        const filename = `M3_S2_L${s2Level}_${ts}.${ext}`;
-        
-        const a = document.createElement('a'); 
-        a.href = URL.createObjectURL(new Blob([currentOut], {type: mime})); 
-        a.download = filename; 
-        a.click(); 
+        if(!currentOut) return; const ext = outputFormat === 'gpx' ? 'gpx' : 'txt'; const mime = outputFormat === 'gpx' ? 'text/xml' : 'text/plain';
+        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([currentOut], {type: mime})); a.download = `M3_S2_L${s2Level}_${getTimestamp()}.${ext}`; a.click(); 
       };
 
       return (
@@ -1845,8 +1853,8 @@
     }
 
     function App() {
-      const [appMode, setAppMode] = useStickyState('mode2', 'pikmin_v36_appmode');
-      const [isDark, setIsDark] = useStickyState(true, 'pikmin_v36_theme_is_dark');
+      const [appMode, setAppMode] = useStickyState('mode1', 'pikmin_v37_appmode');
+      const [isDark, setIsDark] = useStickyState(true, 'pikmin_v37_theme_is_dark');
 
       useEffect(() => {
         if (isDark) {
@@ -1866,7 +1874,7 @@
                 <i className={`fab fa-neos text-3xl ${isDark ? 'text-emerald-400' : 'text-stone-800'}`}></i>
                 <div>
                   <h1 className={`text-xl font-black tracking-wider uppercase ${isDark ? 'text-white' : 'text-stone-800'}`}>PIKMIN NAVIGATOR</h1>
-                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-stone-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V38<span className="border px-1.5 py-0.5 rounded-sm text-[10px] font-bold shadow-sm transition-colors duration-300 bg-stone-200 dark:bg-blue-600 text-stone-700 dark:text-white border-stone-300 dark:border-transparent">寫字測試中</span></p>
+                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-stone-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V38.5<span className="border px-1.5 py-0.5 rounded-sm text-[10px] font-bold shadow-sm transition-colors duration-300 bg-stone-200 dark:bg-blue-600 text-stone-700 dark:text-white border-stone-300 dark:border-transparent">寫字測試中</span></p>
                 </div>
               </div>
               <div className="flex rounded-lg p-1.5 border w-full sm:w-auto mt-3 sm:mt-0 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700 overflow-x-auto custom-scrollbar">
