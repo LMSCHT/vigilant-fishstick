@@ -219,7 +219,6 @@
         }
         hiddenSvg.removeChild(path); return points;
     };
-    // --- 工具箱結束 ---
     
     const generateOutlinePathEngine = (text, startLat, startLon, sizeMeters, opentypeFont) => {
         return new Promise((resolve, reject) => {
@@ -324,7 +323,7 @@
 
     const resolveCollisions = (localPath, localFlowers, safeR, targetR) => {
         let path = [...localPath];
-        let maxIters = 50; 
+        let maxIters = 15; // 安全保險絲 1：降低無意義的深度遞迴迭代，避免死循環
         let changed = true;
         for (let iter = 0; iter < maxIters && changed; iter++) {
             changed = false;
@@ -347,6 +346,11 @@
                 }
             }
             newPath.push(path[path.length - 1]); path = newPath;
+            
+            // 安全保險絲 2：防止左側偏移陷阱導致的「切西瓜指數爆炸」
+            if (path.length > localPath.length * 5 || path.length > 200) {
+                break;
+            }
         }
         return path;
     };
@@ -509,8 +513,14 @@
       const [speedKmH, setSpeedKmH] = useStickyState(18, 'pikmin_v34_m1_speed');
       const [patternType, setPatternType] = useStickyState('O', 'pikmin_v34_m1_pattern');
       const [harvestDist, setHarvestDist] = useStickyState(55, 'pikmin_v38_m1_harvest');
+      
+      // Debounce slider state: 即時反應於 UI 畫面，但在 mouseUp 時才傳遞給主邏輯
+      const [tempHarvestDist, setTempHarvestDist] = useState(harvestDist);
       const [offsetSide, setOffsetSide] = useStickyState('R', 'pikmin_v38_m1_offside');
       
+      // 當外部 state 初始化時同步到 temp
+      useEffect(() => { setTempHarvestDist(harvestDist); }, [harvestDist]);
+
       const [points, setPoints] = useState([]);
       const [outputs, setOutputs] = useState({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '', pureGpx: '', pureCsv: '' });
       const [outputTab, setOutputTab] = useState('planting');
@@ -958,20 +968,21 @@
             <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
               
               {/* --- 新增：超緊湊 🍎 採果微調面板 --- */}
-              <div className={`px-3 py-2.5 rounded-lg border mb-3 flex items-center justify-between transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-rose-50 border-rose-200'}`}>
-                  <div className={`text-xs font-bold flex items-center shrink-0 mr-3 ${isDark ? 'text-rose-400' : 'text-rose-700'}`}>
-                      <i className="fas fa-apple-alt mr-1.5"></i> 🍎 採果微調
+              <div className={`px-3 py-2 rounded-lg border mb-3 flex items-center justify-between transition-colors ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-stone-50 border-stone-200'}`}>
+                  <div className={`text-xs font-bold flex items-center shrink-0 mr-3 ${theme.text}`}>
+                      <i className="fas fa-apple-alt mr-1.5"></i> 採果微調
                   </div>
                   
                   <div className="flex-1 flex items-center gap-2 max-w-[200px]">
-                      <label className={`text-[10px] font-bold whitespace-nowrap hidden sm:block ${isDark ? 'text-slate-400' : 'text-rose-800'}`}>偏移距離:</label>
-                      <input type="range" min="30" max="70" value={harvestDist} onChange={(e)=>setHarvestDist(parseInt(e.target.value))} className="flex-1 accent-rose-500 h-1 bg-stone-300 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer" />
-                      <span className={`text-[10px] font-mono font-bold w-9 text-right shrink-0 ${isDark ? 'text-rose-400' : 'text-rose-700'}`}>{harvestDist}m</span>
+                      <label className={`text-xs font-bold whitespace-nowrap hidden sm:block ${isDark ? 'text-slate-400' : 'text-stone-600'}`}>偏移距離:</label>
+                      {/* React Debounce 修正：UI 綁定 tempHarvestDist，Release 才更新 harvestDist */}
+                      <input type="range" min="30" max="70" value={tempHarvestDist} onChange={(e)=>setTempHarvestDist(parseInt(e.target.value))} onMouseUp={()=>setHarvestDist(tempHarvestDist)} onTouchEnd={()=>setHarvestDist(tempHarvestDist)} className={`flex-1 h-1.5 bg-stone-300 dark:bg-slate-700 rounded-lg cursor-pointer ${theme.bg.replace('bg-', 'accent-')}`} />
+                      <span className={`text-xs font-mono font-bold w-9 text-right ${theme.text}`}>[{tempHarvestDist}m]</span>
                   </div>
 
-                  <div className="flex rounded border overflow-hidden shrink-0 ml-3 transition-colors duration-300 bg-stone-200 dark:bg-slate-800 border-stone-300 dark:border-slate-600">
-                      <button onClick={()=>setOffsetSide('L')} className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${offsetSide==='L' ? 'bg-rose-500 text-white' : (isDark ? 'text-slate-400 hover:text-rose-400' : 'text-stone-500 hover:text-stone-700')}`}>左側</button>
-                      <button onClick={()=>setOffsetSide('R')} className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${offsetSide==='R' ? 'bg-rose-500 text-white' : (isDark ? 'text-slate-400 hover:text-rose-400' : 'text-stone-500 hover:text-stone-700')}`}>右側</button>
+                  <div className="flex rounded border overflow-hidden shrink-0 ml-3 transition-colors duration-300 bg-stone-200 dark:bg-slate-800 border-stone-300 dark:border-slate-700">
+                      <button onClick={()=>setOffsetSide('L')} className={`px-2.5 py-1 text-xs font-bold transition-colors ${offsetSide==='L' ? theme.bg + ' text-white' : (isDark ? 'text-slate-400 hover:text-blue-400' : 'text-stone-500 hover:text-stone-700')}`}>左側</button>
+                      <button onClick={()=>setOffsetSide('R')} className={`px-2.5 py-1 text-xs font-bold transition-colors ${offsetSide==='R' ? theme.bg + ' text-white' : (isDark ? 'text-slate-400 hover:text-blue-400' : 'text-stone-500 hover:text-stone-700')}`}>右側</button>
                   </div>
               </div>
               {/* --- 面板結束 --- */}
@@ -981,16 +992,16 @@
                  <div className="flex rounded p-1 flex-1 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border border-stone-300 dark:border-transparent">
                    <button onClick={()=>setOutputTab('pure')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='pure' ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>純花點</button>
                    <button onClick={()=>setOutputTab('planting')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='planting' ? (isDark ? theme.bg + ' ' + (patternType==='O'?'text-white':'text-slate-900') : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>種植</button>
-                   <button onClick={()=>setOutputTab('fruit')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='fruit' ? (isDark ? 'bg-rose-600 text-white' : 'bg-rose-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>採果</button>
+                   <button onClick={()=>setOutputTab('fruit')} className={`flex-1 text-xs py-1.5 rounded font-bold transition ${outputTab==='fruit' ? (isDark ? theme.bg + ' text-white' : theme.bg + ' text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>採果</button>
                  </div>
                  <div className="flex rounded border overflow-hidden shrink-0 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600 shadow-none dark:shadow-inner">
-                    <button onClick={()=>setOutputFormat('gpx')} className={`px-3 py-1.5 text-xs transition ${outputFormat==='gpx' ? (isDark ? 'bg-slate-600 text-white' : 'bg-stone-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
-                    <button onClick={()=>setOutputFormat('csv')} className={`px-3 py-1.5 text-xs transition ${outputFormat==='csv' ? (isDark ? 'bg-slate-600 text-white' : 'bg-stone-500 text-white shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>座標</button>
+                    <button onClick={()=>setOutputFormat('gpx')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='gpx' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
+                    <button onClick={()=>setOutputFormat('csv')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='csv' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>座標</button>
                  </div>
               </div>
               <div className="relative h-24 rounded border shadow-inner transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700">
                 <textarea className={`w-full h-full bg-transparent text-xs p-3 custom-scrollbar outline-none font-mono ${theme.outputText}`} readOnly value={currentOut} placeholder="等待生成..."></textarea>
-                {currentOut && <div className="absolute bottom-2 right-2 flex gap-1.5"><button onClick={copyGPX} className={`p-1.5 rounded active:scale-95 transition ${isDark ? 'bg-slate-700 text-white' : 'bg-stone-100 border border-stone-300 text-stone-600 hover:bg-stone-200'}`}><i className={`fas ${copied?`fa-check ${isDark ? theme.text : 'text-emerald-600'}`:`fa-copy`} text-sm`}></i></button><button onClick={dlGPX} className={`text-white px-3 py-1.5 rounded text-sm font-bold active:scale-95 transition shadow-sm ${theme.bg} ${isDark ? '' : theme.hoverBg}`}><i className="fas fa-download"></i></button></div>}
+                {currentOut && <div className="absolute bottom-2 right-2 flex gap-1.5"><button onClick={copyGPX} className={`p-1.5 rounded active:scale-95 transition bg-stone-100 dark:bg-slate-700 border border-stone-300 dark:border-transparent text-stone-600 dark:text-white hover:bg-stone-200 dark:hover:bg-slate-600`}><i className={`fas ${copied?`fa-check ${isDark ? theme.text : 'text-emerald-600'}`:`fa-copy ${isDark ? 'text-white' : 'text-stone-600'}`} text-sm`}></i></button><button onClick={dlGPX} className={`text-white px-3 py-1.5 rounded text-sm font-bold active:scale-95 transition shadow-sm ${theme.bg} ${isDark ? '' : theme.hoverBg}`}><i className="fas fa-download"></i></button></div>}
               </div>
             </div>
           </div>
@@ -1604,7 +1615,7 @@
             <div className="flex-1 p-4 rounded-xl border flex flex-col min-h-[250px] transition-colors duration-300 bg-stone-100 dark:bg-slate-800 border-stone-300 dark:border-slate-700 shadow-sm dark:shadow-xl">
               <div className="flex flex-wrap justify-between items-center gap-2 mb-3 shrink-0">
                 <h2 className={`text-sm sm:text-base font-bold ${isDark ? 'text-blue-400' : 'text-stone-800'}`}>輸出結果</h2>
-                 <div className="flex rounded border overflow-hidden shrink-0 transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-600 shadow-none dark:shadow-inner">
+                <div className="flex rounded border overflow-hidden transition-colors duration-300 bg-stone-200 dark:bg-slate-900 border-stone-300 dark:border-slate-700">
                     <button onClick={()=>setOutputFormat('gpx')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='gpx' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>GPX</button>
                     <button onClick={()=>setOutputFormat('csv')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='csv' ? (isDark ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-800 shadow-sm') : 'text-stone-500 dark:text-slate-400'}`}>座標</button>
                 </div>
