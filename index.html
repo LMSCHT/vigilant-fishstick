@@ -311,7 +311,7 @@
         });
     };
 
-    // --- 新增：極限拉果演算工具箱 (碰撞解析引擎) ---
+    // --- 新增：極限拉果演算工具箱 (尋路網格引擎 - 方案一) ---
     const distToSegment = (p, v, w) => {
         const l2 = (v.x - w.x)**2 + (v.y - w.y)**2;
         if (l2 === 0) return { dist: Math.hypot(p.x - v.x, p.y - v.y), closest: {x: v.x, y: v.y} };
@@ -321,36 +321,66 @@
         return { dist: Math.hypot(p.x - closest.x, p.y - closest.y), closest: closest };
     };
 
-    const resolveCollisions = (localPath, localFlowers, safeR, targetR) => {
-        let path = [...localPath];
-        let maxIters = 15; // 安全保險絲 1：降低無意義的深度遞迴迭代，避免死循環
-        let changed = true;
-        for (let iter = 0; iter < maxIters && changed; iter++) {
-            changed = false;
-            let newPath = [];
-            for (let i = 0; i < path.length - 1; i++) {
-                let p1 = path[i]; let p2 = path[i+1];
-                newPath.push(p1);
-                let worstFlower = null, worstDist = Infinity, worstClosestPt = null;
-                for (let f of localFlowers) {
-                    let info = distToSegment(f, p1, p2);
-                    if (info.dist < safeR && info.dist < worstDist) { worstDist = info.dist; worstFlower = f; worstClosestPt = info.closest; }
-                }
-                if (worstFlower) {
-                    let dx = worstClosestPt.x - worstFlower.x; let dy = worstClosestPt.y - worstFlower.y;
-                    let len = Math.hypot(dx, dy);
-                    if (len < 1e-3) { dx = -(p2.y - p1.y); dy = p2.x - p1.x; len = Math.hypot(dx, dy); }
-                    let nx = dx / len, ny = dy / len;
-                    newPath.push({ x: worstFlower.x + nx * targetR, y: worstFlower.y + ny * targetR, isResolved: true });
-                    changed = true;
+    // 檢查兩點連線是否安全 (不會切過任何一朵花的 45m 禁區)
+    const isLineSafe = (p1, p2, flowers, safeR) => {
+        // 利用 Bounding box 優化迴圈效能
+        const minX = Math.min(p1.x, p2.x) - safeR;
+        const maxX = Math.max(p1.x, p2.x) + safeR;
+        const minY = Math.min(p1.y, p2.y) - safeR;
+        const maxY = Math.max(p1.y, p2.y) + safeR;
+
+        for (let f of flowers) {
+            if (f.x < minX || f.x > maxX || f.y < minY || f.y > maxY) continue;
+            let info = distToSegment(f, p1, p2);
+            if (info.dist < safeR - 0.1) return false; // 留 0.1 誤差寬容度
+        }
+        return true;
+    };
+
+    // 最短路徑演算法 (Dijkstra) 用於在安全網格點中找路徑
+    const findShortestPath = (startIdx, endIdx, nodes, flowers, safeR) => {
+        const n = nodes.length;
+        const dist = new Float64Array(n).fill(Infinity);
+        const prev = new Int32Array(n).fill(-1);
+        const visited = new Uint8Array(n).fill(0);
+        
+        dist[startIdx] = 0;
+        
+        for (let iter = 0; iter < n; iter++) {
+            let u = -1;
+            let minDist = Infinity;
+            for (let i = 0; i < n; i++) {
+                if (!visited[i] && dist[i] < minDist) {
+                    minDist = dist[i];
+                    u = i;
                 }
             }
-            newPath.push(path[path.length - 1]); path = newPath;
             
-            // 安全保險絲 2：防止左側偏移陷阱導致的「切西瓜指數爆炸」
-            if (path.length > localPath.length * 5 || path.length > 200) {
-                break;
+            if (u === -1 || u === endIdx) break;
+            visited[u] = 1;
+            
+            const pU = nodes[u];
+            for (let v = 0; v < n; v++) {
+                if (visited[v]) continue;
+                const pV = nodes[v];
+                // 若連線安全，計算成本
+                if (isLineSafe(pU, pV, flowers, safeR)) {
+                    const d = Math.hypot(pU.x - pV.x, pU.y - pV.y);
+                    if (dist[u] + d < dist[v]) {
+                        dist[v] = dist[u] + d;
+                        prev[v] = u;
+                    }
+                }
             }
+        }
+        
+        if (dist[endIdx] === Infinity) return null; // 找不到安全路徑
+        
+        const path = [];
+        let curr = endIdx;
+        while (curr !== -1) {
+            path.unshift(nodes[curr]);
+            curr = prev[curr];
         }
         return path;
     };
@@ -362,8 +392,12 @@
         const lonToM = getLonToMeters(refLat);
         const localFlowers = points.map(p => ({ x: (p.lon - refLon) * lonToM, y: (p.lat - refLat) * CONSTANTS.LAT_TO_M }));
 
-        let localPath = [];
+        const SAFE_R = 45; // 絕對禁區 40m + 5m 防卡緩衝
+        const TARGET_R = targetOffset;
         const n = localFlowers.length;
+
+        // 步驟 1：取得每一朵花的「理想偏移點」
+        let idealPath = [];
         for (let i = 0; i < n; i++) {
             let tangent = { x: 0, y: 0 };
             if (i === 0) {
@@ -382,13 +416,89 @@
                 tangent = tLen < 1e-6 ? { x: vIn.x, y: vIn.y } : { x: tangent.x/tLen, y: tangent.y/tLen };
             }
             let nx = tangent.y * sign; let ny = -tangent.x * sign;
-            localPath.push({ x: localFlowers[i].x + nx * targetOffset, y: localFlowers[i].y + ny * targetOffset, isResolved: false });
+            idealPath.push({ x: localFlowers[i].x + nx * TARGET_R, y: localFlowers[i].y + ny * TARGET_R, isResolved: false });
+        }
+
+        // 步驟 2：建立安全候選點網格 (撒豆子)
+        const candidates = [];
+        const ANGLE_STEP = 30; // 每朵花外圍產生 12 個候選點
+        for (let i = 0; i < n; i++) {
+            let f = localFlowers[i];
+            for (let deg = 0; deg < 360; deg += ANGLE_STEP) {
+                let rad = deg * Math.PI / 180;
+                let cp = {
+                    x: f.x + Math.cos(rad) * TARGET_R,
+                    y: f.y + Math.sin(rad) * TARGET_R,
+                    isResolved: true
+                };
+                // 無情篩選：刪除落在任何禁區內的點
+                let safe = true;
+                for (let j = 0; j < n; j++) {
+                    if (Math.hypot(cp.x - localFlowers[j].x, cp.y - localFlowers[j].y) < SAFE_R - 0.1) {
+                        safe = false; break;
+                    }
+                }
+                if (safe) candidates.push(cp);
+            }
+        }
+
+        // 步驟 3：校正理想目標點
+        // 將深陷禁區的無效理想點，"傳送"到最近的安全網格點上
+        let targetPath = [];
+        for (let i = 0; i < n; i++) {
+            let ideal = idealPath[i];
+            let safe = true;
+            for (let j = 0; j < n; j++) {
+                if (Math.hypot(ideal.x - localFlowers[j].x, ideal.y - localFlowers[j].y) < SAFE_R - 0.1) {
+                    safe = false; break;
+                }
+            }
+            if (safe) {
+                targetPath.push(ideal);
+            } else {
+                let bestC = null; let minDist = Infinity;
+                for (let c of candidates) {
+                    let d = Math.hypot(ideal.x - c.x, ideal.y - c.y);
+                    if (d < minDist) { minDist = d; bestC = c; }
+                }
+                targetPath.push(bestC ? { x: bestC.x, y: bestC.y, isResolved: true } : ideal);
+            }
+        }
+
+        // 步驟 4：Dijkstra 尋路，主動規劃各點連線
+        let finalLocalPath = [];
+        let nodesPool = [...candidates]; 
+        
+        for (let i = 0; i < n - 1; i++) {
+            let pStart = targetPath[i];
+            let pEnd = targetPath[i+1];
+            
+            if (i === 0) finalLocalPath.push(pStart);
+            
+            // 直線安全的話，就直接連線節省效能
+            if (isLineSafe(pStart, pEnd, localFlowers, SAFE_R)) {
+                finalLocalPath.push(pEnd);
+            } else {
+                // 如果會撞山，就把這兩點跟所有網格放入 Dijkstra 中尋路
+                let currentNodes = [pStart, pEnd, ...nodesPool];
+                let subPath = findShortestPath(0, 1, currentNodes, localFlowers, SAFE_R);
+                if (subPath && subPath.length > 1) {
+                    for (let k = 1; k < subPath.length; k++) {
+                        finalLocalPath.push(subPath[k]);
+                    }
+                } else {
+                    finalLocalPath.push(pEnd); // 真實的死胡同 (Fallback盲連)
+                }
+            }
         }
         
-        const SAFE_R = 45; // 絕對禁區 40m + 5m 防卡緩衝
-        const safeLocalPath = resolveCollisions(localPath, localFlowers, SAFE_R, targetOffset);
+        if (n === 1) finalLocalPath = targetPath;
 
-        return safeLocalPath.map(p => ({ lat: refLat + p.y / CONSTANTS.LAT_TO_M, lon: refLon + p.x / lonToM, isResolved: p.isResolved }));
+        return finalLocalPath.map(p => ({
+            lat: refLat + p.y / CONSTANTS.LAT_TO_M,
+            lon: refLon + p.x / lonToM,
+            isResolved: p.isResolved || false
+        }));
     };
     // --- 結束：採果演算法 ---
 
