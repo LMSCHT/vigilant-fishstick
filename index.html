@@ -294,8 +294,8 @@
                     let strokeCoords = [];
                     pathPts.forEach(p => {
                         const dx_meters = (p.x - minX) * metersPerPixel;
-                        const dy_meters = (maxY - p.y) * metersPerPixel;
-                        const lat = startLat + (dy_meters / 111132);
+                        const dy_meters = (p.y - minY) * metersPerPixel;
+                        const lat = startLat - (dy_meters / 111132);
                         const lon = startLon + (dx_meters / (111132 * Math.cos(startLat * Math.PI / 180)));
                         strokeCoords.push([lat, lon]);
                         flatContinuousPath.push([lat, lon]);
