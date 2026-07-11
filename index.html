@@ -131,7 +131,7 @@
         return maxX > 0 ? maxX : 30;
     };
 
-    const parseVectorPath = (vectorStr, sizeMeters, offsetX, startLat, startLon, resolution, charIndex) => {
+    const parseVectorPath = (vectorStr, sizeMeters, offsetX, offsetY, startLat, startLon, resolution, charIndex) => {
         if (!vectorStr) return { parsedStrokes: [], advanceWidth: 0 };
         const strokes = vectorStr.split('|');
         let parsedStrokes = [], rawLocalStrokes = []; 
@@ -150,7 +150,7 @@
             smoothPts.forEach(pt => {
                 const dx_meters = (pt.localX / 100) * sizeMeters + offsetX;
                 const finalY = pt.localY + bouncyOffset;
-                const dy_meters = (finalY / 100) * sizeMeters;
+                const dy_meters = (finalY / 100) * sizeMeters + offsetY;
                 const lat = startLat - (dy_meters / 111132); 
                 const lon = startLon + (dx_meters / (111132 * Math.cos(startLat * Math.PI / 180)));
                 strokeCoords.push([lat, lon]);
@@ -160,26 +160,35 @@
         return { parsedStrokes, advanceWidth: getCharAdvanceWidth(rawLocalStrokes) };
     };
 
-    const generateSkeletonPathEngine = async (text, startLat, startLon, sizeMeters, spacingMeters) => {
+    const generateSkeletonPathEngine = async (text, startLat, startLon, sizeMeters, spacingMeters, direction = 'H') => {
         let currentXOffset = 0; 
+        let currentYOffset = 0;
         let allStrokes = [], jumpLines = [], flatContinuousPath = []; 
         let lastPoint = null;   
         const resolution = 15;
 
         for (let i = 0; i < text.length; i++) {
             const char = text[i];
-            if (char === ' ') { currentXOffset += (sizeMeters * 0.4 + spacingMeters); continue; }
+            if (char === ' ') { 
+                if (direction === 'H') currentXOffset += (sizeMeters * 0.4 + spacingMeters); 
+                else currentYOffset += (sizeMeters * 0.4 + spacingMeters);
+                continue; 
+            }
 
             const vectorStr = VECTOR_DICT[char] || (/[a-zA-Z0-9]/.test(char) ? VECTOR_DICT[char.toUpperCase()] : null);
             if (vectorStr) {
-                const { parsedStrokes, advanceWidth } = parseVectorPath(vectorStr, sizeMeters, currentXOffset, startLat, startLon, resolution, i);
+                const { parsedStrokes, advanceWidth } = parseVectorPath(vectorStr, sizeMeters, currentXOffset, currentYOffset, startLat, startLon, resolution, i);
                 parsedStrokes.forEach((strokeCoords) => {
                     allStrokes.push(strokeCoords);
                     if (lastPoint !== null) jumpLines.push([lastPoint, strokeCoords[0]]);
                     strokeCoords.forEach(p => flatContinuousPath.push(p));
                     lastPoint = strokeCoords[strokeCoords.length - 1];
                 });
-                currentXOffset += (advanceWidth / 100) * sizeMeters + spacingMeters;
+                if (direction === 'H') {
+                    currentXOffset += (advanceWidth / 100) * sizeMeters + spacingMeters;
+                } else {
+                    currentYOffset += sizeMeters + spacingMeters;
+                }
             } else {
                 const data = await fetchHanziChar(char);
                 if (data && data.medians) {
@@ -187,7 +196,7 @@
                         let strokeCoords = [];
                         stroke.forEach(pt => {
                             const dx_meters = (pt[0] / 1024) * sizeMeters + currentXOffset;
-                            const dy_meters = ((pt[1] - 1024) / 1024) * sizeMeters; 
+                            const dy_meters = ((pt[1] - 1024) / 1024) * sizeMeters - currentYOffset; 
                             const lat = startLat + (dy_meters / 111132);
                             const lon = startLon + (dx_meters / (111132 * Math.cos(startLat * Math.PI / 180)));
                             strokeCoords.push([lat, lon]);
@@ -197,7 +206,8 @@
                         if (lastPoint !== null) jumpLines.push([lastPoint, strokeCoords[0]]);
                         lastPoint = strokeCoords[strokeCoords.length - 1];
                     });
-                    currentXOffset += sizeMeters + spacingMeters;
+                    if (direction === 'H') currentXOffset += sizeMeters + spacingMeters;
+                    else currentYOffset += sizeMeters + spacingMeters;
                 }
             }
         }
@@ -223,19 +233,39 @@
         hiddenSvg.removeChild(path); return points;
     };
     
-    const generateOutlinePathEngine = (text, startLat, startLon, sizeMeters, opentypeFont) => {
+    const generateOutlinePathEngine = (text, startLat, startLon, sizeMeters, opentypeFont, spacingMeters = 0, direction = 'H') => {
         return new Promise((resolve, reject) => {
             try {
                 let allSubPaths = [];
                 const fontSize = 800; 
-                const pathObj = opentypeFont.getPath(text, 0, fontSize, fontSize);
-                const dStr = pathObj.toPathData();
-                const subPathsStr = dStr.split(/(?=[Mm])/).filter(p => p.trim());
                 
-                subPathsStr.forEach(subD => {
-                    const pts = samplePath(subD, 15);
-                    if (pts.length > 0) allSubPaths.push(pts);
-                });
+                let currentX = 0;
+                let currentY = 0;
+
+                for (let i = 0; i < text.length; i++) {
+                    const char = text[i];
+                    if (char === ' ') {
+                        if (direction === 'H') currentX += fontSize * 0.4 + (spacingMeters * (fontSize/sizeMeters));
+                        else currentY += fontSize * 0.4 + (spacingMeters * (fontSize/sizeMeters));
+                        continue;
+                    }
+
+                    const pathObj = opentypeFont.getPath(char, currentX, currentY, fontSize);
+                    const dStr = pathObj.toPathData();
+                    const subPathsStr = dStr.split(/(?=[Mm])/).filter(p => p.trim());
+                    
+                    subPathsStr.forEach(subD => {
+                        const pts = samplePath(subD, 15);
+                        if (pts.length > 0) allSubPaths.push(pts);
+                    });
+
+                    if (direction === 'H') {
+                        const advance = opentypeFont.getAdvanceWidth(char, fontSize);
+                        currentX += advance + (spacingMeters * (fontSize/sizeMeters));
+                    } else {
+                        currentY += fontSize + (spacingMeters * (fontSize/sizeMeters));
+                    }
+                }
 
                 if (allSubPaths.length === 0) {
                     return reject(new Error('未解析出任何路徑（可能是當前字體不支援您輸入的字元，請嘗試上傳中文字型）。'));
@@ -622,14 +652,14 @@
       const O_DIRECTIONS = { 'AUTO': '自動判斷', 'CW': '強制順時針', 'CCW': '強制逆時針' };
       const O_ANGLES = [{value:0,label:'0° (不偏移)'},{value:45,label:'+45° 偏移'},{value:90,label:'+90° 偏移'},{value:135,label:'+135° 偏移'},{value:180,label:'+180° 偏移'},{value:225,label:'+225° 偏移'},{value:270,label:'+270° 偏移'},{value:315,label:'+315° 偏移'}];
 
-      const [rawInput, setRawInput] = useStickyState('', 'pikmin_v34_m1_input');
-      const [speedKmH, setSpeedKmH] = useStickyState(18, 'pikmin_v34_m1_speed');
-      const [patternType, setPatternType] = useStickyState('O', 'pikmin_v34_m1_pattern');
-      const [harvestDist, setHarvestDist] = useStickyState(55, 'pikmin_v38_m1_harvest');
+      const [rawInput, setRawInput] = useStickyState('', 'pikmin_v38.5_m1_input');
+      const [speedKmH, setSpeedKmH] = useStickyState(18, 'pikmin_v38.5_m1_speed');
+      const [patternType, setPatternType] = useStickyState('O', 'pikmin_v38.5_m1_pattern');
+      const [harvestDist, setHarvestDist] = useStickyState(55, 'pikmin_v38.5_m1_harvest');
       
       // Debounce slider state: 即時反應於 UI 畫面，但在 mouseUp 時才傳遞給主邏輯
       const [tempHarvestDist, setTempHarvestDist] = useState(harvestDist);
-      const [offsetSide, setOffsetSide] = useStickyState('R', 'pikmin_v38_m1_offside');
+      const [offsetSide, setOffsetSide] = useStickyState('R', 'pikmin_v38.5_m1_offside');
       
       // 當外部 state 初始化時同步到 temp
       useEffect(() => { setTempHarvestDist(harvestDist); }, [harvestDist]);
@@ -839,7 +869,7 @@
         setLoading(true);
         setTimeout(() => {
           try {
-            let pGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38">\n  <trk><name>Planting_${patternType}</name><trkseg>\n`;
+            let pGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38.5">\n  <trk><name>Planting_${patternType}</name><trkseg>\n`;
             let pCsv = '';
             points.forEach((pt, idx) => {
               const np = `F${String(idx + 1).padStart(2, '0')}`;
@@ -850,7 +880,7 @@
             });
             pGpx += `  </trkseg></trk></gpx>`;
 
-            let fGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38">\n  <trk><name>Fruit_Offset</name><trkseg>\n`;
+            let fGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38.5">\n  <trk><name>Fruit_Offset</name><trkseg>\n`;
             let fCsv = '';
             const offsetPts = calcFruitOffsetPath(points, harvestDist, offsetSide);
             offsetPts.forEach((fp, idx) => {
@@ -859,7 +889,7 @@
             });
             fGpx += `  </trkseg></trk></gpx>`;
 
-            let puGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38">\n  <trk><name>Pure_Flowers</name><trkseg>\n`;
+            let puGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38.5">\n  <trk><name>Pure_Flowers</name><trkseg>\n`;
             let puCsv = '';
             points.forEach((pt, idx) => {
               puGpx += `    <trkpt lat="${pt.lat.toFixed(6)}" lon="${pt.lon.toFixed(6)}"><name>F${idx+1}</name></trkpt>\n`;
@@ -1186,7 +1216,7 @@
       const mapRef = useRef(null);
       const layerGroupRef = useRef(null);
       
-      const [config, setConfig] = useStickyState({ startCoord: '', width: '1.5', rows: '20', axis: 'LINE', sweepDir: 'R', advDir: 'F', speedKmH: 18, angle: 0, layers: 1 }, 'pikmin_v37_m2_config');
+      const [config, setConfig] = useStickyState({ startCoord: '', width: '1.5', rows: '20', axis: 'LINE', sweepDir: 'R', advDir: 'F', speedKmH: 18, angle: 0, layers: 1 }, 'pikmin_v38.5_m2_config');
       const configRef = useRef(config);
       useEffect(() => { configRef.current = config; }, [config]);
 
@@ -1200,7 +1230,8 @@
       const [loading, setLoading] = useState(false);
 
       // --- 文字路徑雙引擎專用狀態 ---
-      const [textStyle, setTextStyle] = useStickyState('outline', 'pikmin_v38_text_style'); // 'skeleton' 或 'outline'
+      const [textStyle, setTextStyle] = useStickyState('outline', 'pikmin_v38.5_text_style'); // 'skeleton' 或 'outline'
+      const [textDir, setTextDir] = useStickyState('H', 'pikmin_v38.5_text_dir'); // 'H' 橫向, 'V' 縱向
       const [textInput, setTextInput] = useState('');
       const [textHeight, setTextHeight] = useState(150);
       const [textSpacing, setTextSpacing] = useState(-2); // 只有 skeleton 模式會用到
@@ -1248,7 +1279,7 @@
 
       useEffect(() => {
           if (config.axis === 'TEXT') setIsTextDirty(true);
-      }, [textInput, textHeight, textSpacing, textStyle, config.startCoord]);
+      }, [textInput, textHeight, textSpacing, textStyle, textDir, config.startCoord]);
 
       const handleGenerateText = async () => {
           if (!textInput || !config.startCoord) return;
@@ -1264,9 +1295,9 @@
               try {
                   let body;
                   if (textStyle === 'skeleton') {
-                      body = await generateSkeletonPathEngine(textInput, lat, lon, parseFloat(textHeight), parseFloat(textSpacing));
+                      body = await generateSkeletonPathEngine(textInput, lat, lon, parseFloat(textHeight), parseFloat(textSpacing), textDir);
                   } else {
-                      body = await generateOutlinePathEngine(textInput, lat, lon, parseFloat(textHeight), opentypeFont);
+                      body = await generateOutlinePathEngine(textInput, lat, lon, parseFloat(textHeight), opentypeFont, parseFloat(textSpacing), textDir);
                   }
                   
                   setCachedTextBody(body);
@@ -1381,7 +1412,7 @@
             const td = pts.reduce((acc, p, i) => i===0 ? 0 : acc + calcDistanceKm(pts[i-1], p), 0);
             setStats({ dist: td.toFixed(2), time: Math.round((td / speed) * 60) });
 
-            let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V36_Map_M2">\n  <trk><name>Sweep_${axis}</name><trkseg>\n`;
+            let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38.5_Map_M2">\n  <trk><name>Sweep_${axis}</name><trkseg>\n`;
             let csv = '';
             pts.forEach(p => { xml += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}"><name>${p.name}</name></trkpt>\n`; csv += `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}\n`; });
             xml += `  </trkseg></trk></gpx>`; 
@@ -1436,52 +1467,58 @@
         if (!group) return;
         group.clearLayers();
         
-        if (config.axis === 'TEXT' && cachedTextBody) {
+        if (config.axis === 'TEXT') {
             const centerMatch = config.startCoord.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
             if (!centerMatch) return;
             const centerLat = parseFloat(centerMatch[1]);
             const centerLon = parseFloat(centerMatch[2]);
             const angle = config.angle || 0;
 
-            const rotatedStrokes = cachedTextBody.allStrokes.map(stroke => rotatePoints(stroke, centerLat, centerLon, angle));
-            const rotatedJumpLines = cachedTextBody.jumpLines.map(line => rotatePoints(line, centerLat, centerLon, angle));
-            const rotatedFlatPath = rotatePoints(cachedTextBody.flatContinuousPath, centerLat, centerLon, angle);
+            // 【修正】：只要有座標，就永遠先畫出起點標記，提供即時視覺回饋！
+            L.circleMarker([centerLat, centerLon], { radius: 6, color: '#16a34a', fillColor: '#16a34a', fillOpacity: 1 })
+             .bindPopup("文字起點 (左下角)")
+             .addTo(group);
 
-            if (showRealPath) {
-                L.polyline(rotatedFlatPath, { color: isDark ? '#3b82f6' : '#2563eb', weight: 4, lineCap: 'round', lineJoin: 'round' }).addTo(group);
-            } else {
-                rotatedStrokes.forEach(pts => {
-                    L.polyline(pts, { color: isDark ? '#3b82f6' : '#2563eb', weight: 4, lineCap: 'round', lineJoin: 'round' }).addTo(group);
+            // 【修正】：如果有運算出來的文字實體，才繼續畫字體的路徑
+            if (cachedTextBody) {
+                const rotatedStrokes = cachedTextBody.allStrokes.map(stroke => rotatePoints(stroke, centerLat, centerLon, angle));
+                const rotatedJumpLines = cachedTextBody.jumpLines.map(line => rotatePoints(line, centerLat, centerLon, angle));
+                const rotatedFlatPath = rotatePoints(cachedTextBody.flatContinuousPath, centerLat, centerLon, angle);
+
+                if (showRealPath) {
+                    L.polyline(rotatedFlatPath, { color: isDark ? '#3b82f6' : '#2563eb', weight: 4, lineCap: 'round', lineJoin: 'round' }).addTo(group);
+                } else {
+                    rotatedStrokes.forEach(pts => {
+                        L.polyline(pts, { color: isDark ? '#3b82f6' : '#2563eb', weight: 4, lineCap: 'round', lineJoin: 'round' }).addTo(group);
+                    });
+                    rotatedJumpLines.forEach(pts => {
+                        L.polyline(pts, { color: '#f43f5e', weight: 2, dashArray: '4, 6', opacity: 0.8 }).addTo(group);
+                    });
+                }
+                
+                // 即時更新輸出 (含旋轉過後的座標)
+                let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38.5_Map_M2">\n  <trk><name>Text_Path</name><trkseg>\n`;
+                let csv = '';
+                rotatedFlatPath.forEach(p => { 
+                    const pLat = Array.isArray(p) ? p[0] : p.lat;
+                    const pLon = Array.isArray(p) ? p[1] : p.lon;
+                    xml += `    <trkpt lat="${pLat.toFixed(6)}" lon="${pLon.toFixed(6)}"></trkpt>\n`; 
+                    csv += `${pLat.toFixed(6)}, ${pLon.toFixed(6)}\n`; 
                 });
-                rotatedJumpLines.forEach(pts => {
-                    L.polyline(pts, { color: '#f43f5e', weight: 2, dashArray: '4, 6', opacity: 0.8 }).addTo(group);
-                });
-            }
+                xml += `  </trkseg></trk></gpx>`; 
+                setGpxOut(xml); setCsvOut(csv);
 
-            L.circleMarker([centerLat, centerLon], { radius: 6, color: '#16a34a', fillColor: '#16a34a', fillOpacity: 1 }).bindPopup("文字起點 (左下角)").addTo(group);
-            
-            // 即時更新輸出 (含旋轉過後的座標)
-            let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V36_Map_M2">\n  <trk><name>Text_Path</name><trkseg>\n`;
-            let csv = '';
-            rotatedFlatPath.forEach(p => { 
-                const pLat = Array.isArray(p) ? p[0] : p.lat;
-                const pLon = Array.isArray(p) ? p[1] : p.lon;
-                xml += `    <trkpt lat="${pLat.toFixed(6)}" lon="${pLon.toFixed(6)}"></trkpt>\n`; 
-                csv += `${pLat.toFixed(6)}, ${pLon.toFixed(6)}\n`; 
-            });
-            xml += `  </trkseg></trk></gpx>`; 
-            setGpxOut(xml); setCsvOut(csv);
-
-            // 更新預估里程與時間
-            const speed = parseFloat(config.speedKmH) || 18;
-            let totalD = 0;
-            for(let i=1; i<rotatedFlatPath.length; i++) {
-                const p1 = rotatedFlatPath[i-1]; const p2 = rotatedFlatPath[i];
-                const p1Lat = Array.isArray(p1) ? p1[0] : p1.lat; const p1Lon = Array.isArray(p1) ? p1[1] : p1.lon;
-                const p2Lat = Array.isArray(p2) ? p2[0] : p2.lat; const p2Lon = Array.isArray(p2) ? p2[1] : p2.lon;
-                totalD += calcDistanceKm({lat: p1Lat, lon: p1Lon}, {lat: p2Lat, lon: p2Lon});
+                // 更新預估里程與時間
+                const speed = parseFloat(config.speedKmH) || 18;
+                let totalD = 0;
+                for(let i=1; i<rotatedFlatPath.length; i++) {
+                    const p1 = rotatedFlatPath[i-1]; const p2 = rotatedFlatPath[i];
+                    const p1Lat = Array.isArray(p1) ? p1[0] : p1.lat; const p1Lon = Array.isArray(p1) ? p1[1] : p1.lon;
+                    const p2Lat = Array.isArray(p2) ? p2[0] : p2.lat; const p2Lon = Array.isArray(p2) ? p2[1] : p2.lon;
+                    totalD += calcDistanceKm({lat: p1Lat, lon: p1Lon}, {lat: p2Lat, lon: p2Lon});
+                }
+                setStats({ dist: totalD.toFixed(2), time: Math.round((totalD / speed) * 60) });
             }
-            setStats({ dist: totalD.toFixed(2), time: Math.round((totalD / speed) * 60) });
 
         } else if (config.axis !== 'TEXT' && generatedPts.length > 0) {
            const latlngs = generatedPts.map(p => [p.lat, p.lon]);
@@ -1613,6 +1650,12 @@
                   <div className="flex rounded-lg border overflow-hidden transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-600">
                       <button onClick={() => setTextStyle('skeleton')} className={`flex-1 py-2 text-xs font-bold transition-colors ${textStyle==='skeleton' ? (isDark ? 'bg-amber-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:text-slate-700')}`}><i className="fas fa-pen-nib mr-1.5"></i> 單線骨架</button>
                       <button onClick={() => setTextStyle('outline')} className={`flex-1 py-2 text-xs font-bold transition-colors ${textStyle==='outline' ? (isDark ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:text-slate-700')}`}><i className="fas fa-font mr-1.5"></i> 外框剪影</button>
+                  </div>
+
+                  {/* 新增：文字方向切換面板 */}
+                  <div className="flex rounded-lg border overflow-hidden transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-600">
+                      <button onClick={() => setTextDir('H')} className={`flex-1 py-2 text-xs font-bold transition-colors ${textDir==='H' ? (isDark ? 'bg-slate-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:text-slate-700')}`}><i className="fas fa-arrows-alt-h mr-1.5"></i> 橫向寫字</button>
+                      <button onClick={() => setTextDir('V')} className={`flex-1 py-2 text-xs font-bold transition-colors ${textDir==='V' ? (isDark ? 'bg-slate-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:text-slate-700')}`}><i className="fas fa-arrows-alt-v mr-1.5"></i> 縱向寫字</button>
                   </div>
 
                   {/* 全新字型設定面板 (僅在 outline 模式顯示) */}
@@ -1763,8 +1806,8 @@
       const drawnLayerRef = useRef(null);
       const resultLayerGroupRef = useRef(null);
 
-      const [s2Level, setS2Level] = useStickyState('17', 'pikmin_v37_m3_level');
-      const [pathMode, setPathMode] = useStickyState('vertical-ew', 'pikmin_v37_m3_pathmode');
+      const [s2Level, setS2Level] = useStickyState('17', 'pikmin_v38.5_m3_level');
+      const [pathMode, setPathMode] = useStickyState('vertical-ew', 'pikmin_v38.5_m3_pathmode');
       const [searchQuery, setSearchQuery] = useState('');
       const [drawnCoords, setDrawnCoords] = useState([]);
       const [pathData, setPathData] = useState([]);
@@ -1863,7 +1906,7 @@
             setPathData(finalPath);
             if (finalPath.length === 0) { setBadgeText('範圍過小，未能涵蓋網格'); setGpxOut(''); setCsvOut(''); if (resultLayerGroupRef.current) resultLayerGroupRef.current.clearLayers(); setLoading(false); return; }
 
-            let gpxStr = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V37_Mode3">\n  <trk><name>S2_Map_Sweep</name><trkseg>\n`; let csvStr = '';
+            let gpxStr = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38.5_Mode3">\n  <trk><name>S2_Map_Sweep</name><trkseg>\n`; let csvStr = '';
             finalPath.forEach(p => { gpxStr += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lng.toFixed(6)}"></trkpt>\n`; csvStr += `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}\n`; });
             gpxStr += `  </trkseg></trk></gpx>`;
             setGpxOut(gpxStr); setCsvOut(csvStr); setBadgeText(`總計涵蓋 ${finalPath.length} 個 S2 網格`);
@@ -1977,8 +2020,8 @@
     }
 
     function App() {
-      const [appMode, setAppMode] = useStickyState('mode1', 'pikmin_v37_appmode');
-      const [isDark, setIsDark] = useStickyState(true, 'pikmin_v37_theme_is_dark');
+      const [appMode, setAppMode] = useStickyState('mode1', 'pikmin_v38.5_appmode');
+      const [isDark, setIsDark] = useStickyState(true, 'pikmin_v38.5_theme_is_dark');
 
       useEffect(() => {
         if (isDark) {
