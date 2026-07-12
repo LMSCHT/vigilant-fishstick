@@ -51,6 +51,14 @@
     
     .svg-container { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
     .svg-container:active { cursor: grabbing; }
+
+    /* 花朵高亮：脈動光圈，用來在密集畫面中快速定位當前選取點 */
+    @keyframes flowerPulseRing {
+      0%   { r: var(--pulse-r-min); opacity: 0.9; }
+      70%  { r: var(--pulse-r-max); opacity: 0; }
+      100% { r: var(--pulse-r-max); opacity: 0; }
+    }
+    .flower-pulse-ring { animation: flowerPulseRing 1.4s ease-out infinite; transform-box: fill-box; }
     
     .bg-grid { background-size: 40px 40px; background-image: linear-gradient(to right, rgba(0, 0, 0, 0.04) 1px, transparent 1px), linear-gradient(to bottom, rgba(0, 0, 0, 0.04) 1px, transparent 1px); }
     .dark .bg-grid { background-image: linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px), linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px); }
@@ -1035,6 +1043,13 @@
 
       useInteractiveMap(svgRef, transformRef, setTransform);
       const resetZoom = () => setTransform({ k: 1, x: 0, y: 0 });
+      // 點擊序列微調列表時，保持目前縮放倍率，僅平移地圖讓該花朵置中於畫面
+      const centerOnPoint = (i) => {
+        if (!vData || !points[i]) return;
+        const raw = vData.toSVG(points[i].lat, points[i].lon);
+        const localX = 100 + 0.9 * raw.x, localY = 100 + 0.9 * raw.y;
+        setTransform(cur => ({ k: cur.k, x: 1000 - cur.k * localX, y: 1000 - cur.k * localY }));
+      };
       
       const currentOut = outputTab === 'pure' ? (outputFormat === 'gpx' ? outputs.pureGpx : outputs.pureCsv) :
                          outputTab === 'planting' ? (outputFormat === 'gpx' ? outputs.plantingGpx : outputs.plantingCsv) : 
@@ -1123,8 +1138,8 @@
                     <div key={pt.id}
                       onMouseEnter={()=>setActiveIdx(i)}
                       onMouseLeave={()=>setActiveIdx(prev => prev === i ? null : prev)}
-                      onClick={()=>setActiveIdx(i)}
-                      className={`group px-2 py-1 rounded-md text-sm border flex items-center gap-2 transition-all cursor-pointer ${isActive ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-400' : 'bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600 hover:border-emerald-400 dark:hover:border-emerald-400'}`}>
+                      onClick={()=>{setActiveIdx(i); centerOnPoint(i);}}
+                      className={`group px-2 py-1 rounded-md text-sm border flex items-center gap-2 transition-all cursor-pointer ${isActive ? 'bg-cyan-50 dark:bg-cyan-500/10 border-cyan-400' : 'bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600 hover:border-cyan-400 dark:hover:border-cyan-400'}`}>
                       <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${theme.badgeBg} ${theme.badgeText}`}>{i+1}</span>
                       <select className={`border rounded py-0.5 px-1.5 text-xs flex-[2] min-w-0 truncate focus:outline-none transition-colors duration-300 bg-white dark:bg-slate-900 border-slate-200 dark:border-transparent text-slate-800 dark:text-slate-200 ${isDark ? theme.ring : 'focus:border-slate-400'}`} value={safeDir} onChange={(e)=>updatePoint(i,'dir',e.target.value)}>
                         {patternType==='O'?Object.entries(O_DIRECTIONS).map(([k,v])=><option key={k} value={k} className="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200">{v}</option>):Object.entries(DIRECTIONS).map(([k,v])=><option key={k} value={k} className="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200">{v}</option>)}
@@ -1199,26 +1214,38 @@
                     {vData.pPaths.map((p, i) => i < vData.pPaths.length-1 ? <line key={`l${i}`} x1={p[p.length-1].x} y1={p[p.length-1].y} x2={vData.pPaths[i+1][0].x} y2={vData.pPaths[i+1][0].y} stroke={isDark ? "#64748b" : "#94a3b8"} strokeWidth={2/transform.k} strokeDasharray="10,10"/> : null)}
                     
                     {vData.pPaths.map((p, i) => {
+                      const fx = vData.toSVG(points[i].lat,points[i].lon).x, fy = vData.toSVG(points[i].lat,points[i].lon).y;
+                      const isActive = activeIdx === i;
+                      const dimmed = activeIdx !== null && !isActive;
                       return (
-                      <g key={`f${i}`} onMouseEnter={()=>setActiveIdx(i)} onMouseLeave={()=>setActiveIdx(prev => prev === i ? null : prev)}>
-                        {activeIdx === i && (
-                          <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.rSafe*0.5} fill="none" stroke="#10b981" strokeWidth={2.5/transform.k} className="pointer-events-none"/>
+                      <g key={`f${i}`} onMouseEnter={()=>setActiveIdx(i)} onMouseLeave={()=>setActiveIdx(prev => prev === i ? null : prev)}
+                         className="transition-opacity duration-200" opacity={dimmed ? 0.28 : 1}>
+                        {isActive && (
+                          <>
+                            {/* 脈動光圈：用動畫吸引視線，快速在密集畫面中定位當前選取點 */}
+                            <circle cx={fx} cy={fy} r={vData.rSafe*0.5} fill="none" stroke="#22d3ee" strokeWidth={3/transform.k}
+                              className="pointer-events-none flower-pulse-ring"
+                              style={{'--pulse-r-min': vData.rSafe*0.45, '--pulse-r-max': vData.rSafe*1.15}}/>
+                            <circle cx={fx} cy={fy} r={vData.rSafe*0.55} fill="none" stroke="#22d3ee" strokeWidth={2.5/transform.k}
+                              className="pointer-events-none" style={{filter:'drop-shadow(0 0 6px rgba(34,211,238,0.9))'}}/>
+                          </>
                         )}
-                        <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.rTarget} fill="none" stroke="rgba(244, 63, 94, 0.4)" strokeWidth={1/transform.k} className="pointer-events-none"/>
-                        <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.r45} fill="rgba(16, 185, 129, 0.05)" stroke={isDark ? "rgba(16, 185, 129, 0.5)" : "rgba(16, 185, 129, 0.6)"} strokeWidth={1/transform.k} strokeDasharray="4,4" className="pointer-events-none"/>
+                        <circle cx={fx} cy={fy} r={vData.rTarget} fill="none" stroke="rgba(244, 63, 94, 0.4)" strokeWidth={1/transform.k} className="pointer-events-none"/>
+                        <circle cx={fx} cy={fy} r={vData.r45} fill="rgba(16, 185, 129, 0.05)" stroke={isDark ? "rgba(16, 185, 129, 0.5)" : "rgba(16, 185, 129, 0.6)"} strokeWidth={1/transform.k} strokeDasharray="4,4" className="pointer-events-none"/>
 
-                        <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.r40} fill={theme.hexMain} fillOpacity="0.05" stroke={isDark ? "#64748b" : "#cbd5e1"} strokeWidth={1.5/transform.k} strokeDasharray="5,5"/>
-                        <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.rSafe} fill="none" stroke={isDark ? "#f59e0b" : "#d97706"} strokeWidth={1/transform.k} strokeDasharray="2,2" opacity={isDark ? "0.4" : "0.5"}/>
+                        <circle cx={fx} cy={fy} r={vData.r40} fill={theme.hexMain} fillOpacity="0.05" stroke={isDark ? "#64748b" : "#cbd5e1"} strokeWidth={1.5/transform.k} strokeDasharray="5,5"/>
+                        <circle cx={fx} cy={fy} r={vData.rSafe} fill="none" stroke={isDark ? "#f59e0b" : "#d97706"} strokeWidth={1/transform.k} strokeDasharray="2,2" opacity={isDark ? "0.4" : "0.5"}/>
                         <circle 
-                            cx={vData.toSVG(points[i].lat,points[i].lon).x} 
-                            cy={vData.toSVG(points[i].lat,points[i].lon).y} 
-                            r={activeIdx === i ? vData.rSafe*0.35 : vData.rSafe*0.25} 
-                            fill={theme.hexMain} 
+                            cx={fx} cy={fy} 
+                            r={isActive ? vData.rSafe*0.4 : vData.rSafe*0.25} 
+                            fill={isActive ? '#22d3ee' : theme.hexMain} 
+                            stroke={isActive ? '#fff' : 'none'}
+                            strokeWidth={isActive ? 1.5/transform.k : 0}
                             className="transition-all cursor-pointer hover:brightness-110 active:scale-90"
                             onClick={() => handleFlowerClick(i)}
-                            style={{transformOrigin:`${vData.toSVG(points[i].lat,points[i].lon).x}px ${vData.toSVG(points[i].lat,points[i].lon).y}px`}} 
+                            style={{transformOrigin:`${fx}px ${fy}px`, filter: isActive ? 'drop-shadow(0 0 4px rgba(34,211,238,0.8))' : 'none'}} 
                         />
-                        <text x={vData.toSVG(points[i].lat,points[i].lon).x} y={vData.toSVG(points[i].lat,points[i].lon).y} textAnchor="middle" dominantBaseline="central" fill={isDark ? "#0f172a" : "#334155"} fontSize={18/transform.k} fontWeight="bold" className="pointer-events-none">{i+1}</text>
+                        <text x={fx} y={fy} textAnchor="middle" dominantBaseline="central" fill={isActive ? "#083344" : (isDark ? "#0f172a" : "#334155")} fontSize={18/transform.k} fontWeight="bold" className="pointer-events-none">{i+1}</text>
                         
                         <polyline points={p.map(x=>`${x.x},${x.y}`).join(' ')} fill="none" stroke={theme.hexLine} strokeWidth={vData.rSafe * 1.5} strokeLinejoin="round" strokeLinecap="round" opacity="0.15" className="pointer-events-none"/>
                         <polyline points={p.map(x=>`${x.x},${x.y}`).join(' ')} fill="none" stroke={theme.hexLine} strokeWidth={4/transform.k} strokeLinejoin="round" strokeLinecap="round" className="pointer-events-none"/>
