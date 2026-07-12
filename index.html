@@ -19,8 +19,8 @@
   <!-- 【CDN 穩定切換】Leaflet 地圖與繪圖核心套件 -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css" />
-  <script src="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.20.0/dist/leaflet-geoman.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.20.0/dist/leaflet-geoman.min.js"></script>
 
   <!-- 引入 opentype.js 解析真實字型外框 -->
   <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
@@ -535,6 +535,21 @@
     };
     // --- 結束：採果演算法 ---
 
+    // 舊版瀏覽器 / 非安全情境下的剪貼簿複製 fallback
+    const legacyCopyFallback = (text, setCopied) => {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      try {
+        document.execCommand('copy');
+        setCopied(true); setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error("複製失敗", err);
+      } finally {
+        document.body.removeChild(ta);
+      }
+    };
+
     const getTimestamp = () => {
       const d = new Date();
       return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
@@ -558,10 +573,22 @@
 
     function useStickyState(defaultValue, key) {
       const [value, setValue] = useState(() => {
-        const stickyValue = window.localStorage.getItem(key);
-        return stickyValue !== null ? JSON.parse(stickyValue) : defaultValue;
+        try {
+          const stickyValue = window.localStorage.getItem(key);
+          return stickyValue !== null ? JSON.parse(stickyValue) : defaultValue;
+        } catch (e) {
+          // localStorage 在沙盒 / 隱私模式等環境可能被封鎖，退回純記憶體狀態，避免整個 App 崩潰
+          console.warn(`無法讀取 localStorage[${key}]，本次以記憶體狀態運作：`, e);
+          return defaultValue;
+        }
       });
-      useEffect(() => { window.localStorage.setItem(key, JSON.stringify(value)); }, [key, value]);
+      useEffect(() => {
+        try {
+          window.localStorage.setItem(key, JSON.stringify(value));
+        } catch (e) {
+          // 寫入失敗時靜默忽略即可，不影響當前 session 的運作
+        }
+      }, [key, value]);
       return [value, setValue];
     }
 
@@ -665,6 +692,7 @@
       useEffect(() => { setTempHarvestDist(harvestDist); }, [harvestDist]);
 
       const [points, setPoints] = useState([]);
+      const [activeIdx, setActiveIdx] = useState(null);
       const [outputs, setOutputs] = useState({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '', pureGpx: '', pureCsv: '' });
       const [outputTab, setOutputTab] = useState('planting');
       const [outputFormat, setOutputFormat] = useState('gpx'); 
@@ -1014,11 +1042,13 @@
       
       const copyGPX = () => { 
         if(!currentOut) return;
-        const ta = document.createElement('textarea'); ta.value = currentOut; ta.style.position = 'fixed'; 
-        document.body.appendChild(ta); ta.select(); 
-        try { document.execCommand('copy'); setCopied(true); setTimeout(()=>setCopied(false), 2000); } 
-        catch(err) { console.error("複製失敗", err); } 
-        finally { document.body.removeChild(ta); }
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(currentOut)
+            .then(() => { setCopied(true); setTimeout(()=>setCopied(false), 2000); })
+            .catch((err) => { console.error("複製失敗", err); legacyCopyFallback(currentOut, setCopied); });
+        } else {
+          legacyCopyFallback(currentOut, setCopied);
+        }
       };
 
       const dlGPX = () => { 
@@ -1055,7 +1085,7 @@
           {toastMsg && <div className={`absolute top-4 left-1/2 transform -translate-x-1/2 ${theme.toastBg} text-white px-6 py-3 rounded-full z-[1000] animate-bounce flex items-center gap-2 font-bold text-sm shadow-md dark:shadow-lg transition-colors duration-300`}><i className="fas fa-info-circle"></i>{toastMsg}</div>}
           {diagnosticMsg && <div className={`absolute top-16 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full z-[1000] flex items-center gap-2 font-bold text-sm shadow-md dark:shadow-xl transition-colors duration-300 ${diagnosticMsg.type === 'warning' ? (isDark ? 'bg-rose-600 text-white' : 'bg-rose-100 text-rose-800 border border-rose-300') : (isDark ? 'bg-emerald-600 text-white' : 'bg-emerald-100 text-emerald-800 border border-emerald-300')}`}><i className={`fas ${diagnosticMsg.type === 'warning' ? 'fa-exclamation-triangle' : 'fa-check-circle'}`}></i>{diagnosticMsg.text}</div>}
 
-          <div className="lg:col-span-4 flex flex-col gap-4 min-h-[600px] h-[65vh] lg:h-full z-20">
+          <div className="lg:col-span-4 flex flex-col gap-4 h-auto lg:h-full lg:min-h-[600px] z-20">
             <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-xl">
               <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
                 <h2 className={`text-sm sm:text-base font-bold flex items-center gap-2 ${isDark ? theme.text : 'text-slate-800'}`}><i className="fas fa-list-ol"></i> 1. 貼上座標</h2>
@@ -1077,7 +1107,7 @@
                </div>
             </div>
 
-            <div className="flex-1 p-4 rounded-xl border flex flex-col min-h-0 transition-colors duration-300 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-xl">
+            <div className="p-4 rounded-xl border flex flex-col min-h-[220px] max-h-[45vh] lg:max-h-[420px] lg:flex-1 lg:min-h-[280px] transition-colors duration-300 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-xl">
               <div className="flex flex-wrap justify-between items-center gap-2 mb-3 pb-3 border-b shrink-0 transition-colors duration-300 border-slate-200 dark:border-slate-700">
                 <h2 className={`text-sm sm:text-base font-bold flex items-center gap-2 ${isDark ? theme.text : 'text-slate-800'}`}><i className="fas fa-sliders-h"></i> 2. 序列微調</h2>
                 <div className="flex gap-2">
@@ -1085,22 +1115,27 @@
                     <button onClick={handleOptimize} disabled={loading} className="px-3 py-1.5 rounded text-xs font-bold transition active:scale-95 flex items-center gap-1 disabled:opacity-50 border bg-slate-100 dark:bg-blue-500/20 text-slate-600 dark:text-blue-400 hover:bg-slate-200 dark:hover:bg-blue-500/40 border-slate-200 dark:border-transparent"><i className="fas fa-bolt"></i> TSP排序</button>
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar min-h-0">
+              <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar min-h-0">
                 {points.map((pt, i) => {
                   const safeDir = patternType === 'O' ? (['AUTO', 'CW', 'CCW'].includes(pt.dir) ? pt.dir : 'AUTO') : (['NW_SE', 'SW_NE', 'NE_SW', 'SE_NW'].includes(pt.dir) ? pt.dir : 'NW_SE');
+                  const isActive = activeIdx === i;
                   return (
-                    <div key={pt.id} className="px-2 py-1.5 rounded-md text-sm border flex items-center gap-2 transition-all bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600 hover:border-emerald-400 dark:hover:border-emerald-400">
+                    <div key={pt.id}
+                      onMouseEnter={()=>setActiveIdx(i)}
+                      onMouseLeave={()=>setActiveIdx(prev => prev === i ? null : prev)}
+                      onClick={()=>setActiveIdx(i)}
+                      className={`group px-2 py-1 rounded-md text-sm border flex items-center gap-2 transition-all cursor-pointer ${isActive ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-400' : 'bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600 hover:border-emerald-400 dark:hover:border-emerald-400'}`}>
                       <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${theme.badgeBg} ${theme.badgeText}`}>{i+1}</span>
-                      <select className={`border rounded py-1 px-2 text-xs flex-[2] min-w-0 truncate focus:outline-none transition-colors duration-300 bg-white dark:bg-slate-900 border-slate-200 dark:border-transparent text-slate-800 dark:text-slate-200 ${isDark ? theme.ring : 'focus:border-slate-400'}`} value={safeDir} onChange={(e)=>updatePoint(i,'dir',e.target.value)}>
+                      <select className={`border rounded py-0.5 px-1.5 text-xs flex-[2] min-w-0 truncate focus:outline-none transition-colors duration-300 bg-white dark:bg-slate-900 border-slate-200 dark:border-transparent text-slate-800 dark:text-slate-200 ${isDark ? theme.ring : 'focus:border-slate-400'}`} value={safeDir} onChange={(e)=>updatePoint(i,'dir',e.target.value)}>
                         {patternType==='O'?Object.entries(O_DIRECTIONS).map(([k,v])=><option key={k} value={k} className="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200">{v}</option>):Object.entries(DIRECTIONS).map(([k,v])=><option key={k} value={k} className="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200">{v}</option>)}
                       </select>
-                      <select className={`border rounded py-1 px-2 text-xs flex-1 min-w-0 truncate focus:outline-none transition-colors duration-300 ${isDark ? theme.bgSubtle + ' border-transparent ' + theme.text + ' ' + theme.ring : 'bg-white border-slate-200 text-slate-800 focus:border-slate-400'}`} value={pt.angle||0} onChange={(e)=>updatePoint(i,'angle',parseInt(e.target.value))}>
+                      <select className={`border rounded py-0.5 px-1.5 text-xs flex-1 min-w-0 truncate focus:outline-none transition-colors duration-300 ${isDark ? theme.bgSubtle + ' border-transparent ' + theme.text + ' ' + theme.ring : 'bg-white border-slate-200 text-slate-800 focus:border-slate-400'}`} value={pt.angle||0} onChange={(e)=>updatePoint(i,'angle',parseInt(e.target.value))}>
                         {patternType==='O'?O_ANGLES.map(a=><option key={a.value} value={a.value} className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">{a.label}</option>):ANGLES.map(a=><option key={a.value} value={a.value} className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">{a.label}</option>)}
                       </select>
-                      <div className="flex gap-1 shrink-0 bg-transparent rounded transition-colors duration-300">
-                        <button onClick={()=>movePoint(i,-1)} disabled={i===0} className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-emerald-400 disabled:opacity-20"><i className="fas fa-arrow-up text-xs"></i></button>
-                        <button onClick={()=>movePoint(i,1)} disabled={i===points.length-1} className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-emerald-400 disabled:opacity-20"><i className="fas fa-arrow-down text-xs"></i></button>
-                        <button onClick={()=>deletePoint(i)} className="p-1.5 text-slate-400 hover:text-rose-500 dark:hover:text-red-400"><i className="fas fa-trash text-xs"></i></button>
+                      <div className={`flex gap-0.5 shrink-0 bg-transparent rounded transition-opacity duration-150 ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}>
+                        <button onClick={(e)=>{e.stopPropagation(); movePoint(i,-1);}} disabled={i===0} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-emerald-400 disabled:opacity-20"><i className="fas fa-arrow-up text-xs"></i></button>
+                        <button onClick={(e)=>{e.stopPropagation(); movePoint(i,1);}} disabled={i===points.length-1} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-emerald-400 disabled:opacity-20"><i className="fas fa-arrow-down text-xs"></i></button>
+                        <button onClick={(e)=>{e.stopPropagation(); deletePoint(i);}} className="p-1 text-slate-400 hover:text-rose-500 dark:hover:text-red-400"><i className="fas fa-trash text-xs"></i></button>
                       </div>
                     </div>
                   );
@@ -1165,7 +1200,10 @@
                     
                     {vData.pPaths.map((p, i) => {
                       return (
-                      <g key={`f${i}`}>
+                      <g key={`f${i}`} onMouseEnter={()=>setActiveIdx(i)} onMouseLeave={()=>setActiveIdx(prev => prev === i ? null : prev)}>
+                        {activeIdx === i && (
+                          <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.rSafe*0.5} fill="none" stroke="#10b981" strokeWidth={2.5/transform.k} className="pointer-events-none"/>
+                        )}
                         <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.rTarget} fill="none" stroke="rgba(244, 63, 94, 0.4)" strokeWidth={1/transform.k} className="pointer-events-none"/>
                         <circle cx={vData.toSVG(points[i].lat,points[i].lon).x} cy={vData.toSVG(points[i].lat,points[i].lon).y} r={vData.r45} fill="rgba(16, 185, 129, 0.05)" stroke={isDark ? "rgba(16, 185, 129, 0.5)" : "rgba(16, 185, 129, 0.6)"} strokeWidth={1/transform.k} strokeDasharray="4,4" className="pointer-events-none"/>
 
@@ -1174,9 +1212,9 @@
                         <circle 
                             cx={vData.toSVG(points[i].lat,points[i].lon).x} 
                             cy={vData.toSVG(points[i].lat,points[i].lon).y} 
-                            r={vData.rSafe*0.25} 
+                            r={activeIdx === i ? vData.rSafe*0.35 : vData.rSafe*0.25} 
                             fill={theme.hexMain} 
-                            className="transition-colors cursor-pointer hover:brightness-110 active:scale-90"
+                            className="transition-all cursor-pointer hover:brightness-110 active:scale-90"
                             onClick={() => handleFlowerClick(i)}
                             style={{transformOrigin:`${vData.toSVG(points[i].lat,points[i].lon).x}px ${vData.toSVG(points[i].lat,points[i].lon).y}px`}} 
                         />
@@ -1595,11 +1633,13 @@
       
       const copyToClipboard = () => { 
         if(!currentOut) return;
-        const ta = document.createElement('textarea'); ta.value = currentOut; ta.style.position = 'fixed'; 
-        document.body.appendChild(ta); ta.select(); 
-        try { document.execCommand('copy'); setCopied(true); setTimeout(()=>setCopied(false), 2000); } 
-        catch(err) { console.error("複製失敗", err); } 
-        finally { document.body.removeChild(ta); }
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(currentOut)
+            .then(() => { setCopied(true); setTimeout(()=>setCopied(false), 2000); })
+            .catch((err) => { console.error("複製失敗", err); legacyCopyFallback(currentOut, setCopied); });
+        } else {
+          legacyCopyFallback(currentOut, setCopied);
+        }
       };
       
       const dlGPX = () => { 
@@ -1625,7 +1665,7 @@
             </div>
           )}
           
-          <div className="order-2 lg:order-1 lg:col-span-4 flex flex-col gap-4 min-h-[600px] h-[65vh] lg:h-full z-20">
+          <div className="order-2 lg:order-1 lg:col-span-4 flex flex-col gap-4 h-auto lg:h-full lg:min-h-[600px] z-20">
             <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-xl">
               <h2 className={`text-sm sm:text-base font-bold mb-3 flex items-center gap-2 ${isDark ? 'text-blue-400' : 'text-slate-800'}`}><i className="fas fa-crosshairs"></i>幾何與文字佈線</h2>
               
@@ -1948,7 +1988,14 @@
 
       const currentOut = outputFormat === 'gpx' ? gpxOut : csvOut;
       const copyToClipboard = () => { 
-        if(!currentOut) return; navigator.clipboard.writeText(currentOut).then(() => { setCopied(true); setTimeout(()=>setCopied(false), 2000); });
+        if(!currentOut) return;
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(currentOut)
+            .then(() => { setCopied(true); setTimeout(()=>setCopied(false), 2000); })
+            .catch((err) => { console.error("複製失敗", err); legacyCopyFallback(currentOut, setCopied); });
+        } else {
+          legacyCopyFallback(currentOut, setCopied);
+        }
       };
       const dlGPX = () => { 
         if(!currentOut) return; const ext = outputFormat === 'gpx' ? 'gpx' : 'txt'; const mime = outputFormat === 'gpx' ? 'text/xml' : 'text/plain';
@@ -1963,7 +2010,7 @@
               <span className={`ml-3 font-bold tracking-widest text-sm ${isDark ? 'text-blue-400' : 'text-slate-800'}`}>地圖定位與運算中...</span>
             </div>
           )}
-          <div className="lg:col-span-4 flex flex-col gap-4 min-h-[600px] h-[65vh] lg:h-full z-20">
+          <div className="lg:col-span-4 flex flex-col gap-4 h-auto lg:h-full lg:min-h-[600px] z-20">
             <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-xl">
               <h2 className={`text-sm sm:text-base font-bold mb-4 ${isDark ? 'text-blue-400' : 'text-slate-800'}`}><i className="fas fa-draw-polygon mr-2"></i>地圖圈地控制</h2>
               
@@ -2034,7 +2081,7 @@
       }, [isDark]);
 
       return (
-        <div className="lg:h-screen min-h-screen flex flex-col p-2 sm:p-4">
+        <div className="min-h-screen flex flex-col p-2 sm:p-4">
           <div className="max-w-[1600px] w-full mx-auto flex-1 flex flex-col min-h-0">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-4 p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-lg">
               <div className="flex items-center gap-4 px-2">
@@ -2065,7 +2112,24 @@
         </div>
       );
     }
-    const root = ReactDOM.createRoot(document.getElementById('root')); root.render(<App />);
+    class ErrorBoundary extends React.Component {
+      constructor(props) { super(props); this.state = { error: null }; }
+      static getDerivedStateFromError(error) { return { error }; }
+      componentDidCatch(error, info) { console.error('App 發生未捕捉的錯誤：', error, info); }
+      render() {
+        if (this.state.error) {
+          return (
+            <div style={{ padding: '2rem', fontFamily: 'monospace', color: '#f87171', background: '#0f172a', minHeight: '100vh' }}>
+              <h1 style={{ fontSize: '1.25rem', fontWeight: 'bold', marginBottom: '1rem' }}>⚠️ 應用程式發生錯誤</h1>
+              <p style={{ marginBottom: '0.5rem' }}>{String(this.state.error && this.state.error.message || this.state.error)}</p>
+              <p style={{ color: '#94a3b8', fontSize: '0.875rem' }}>請開啟瀏覽器 DevTools Console 查看完整錯誤堆疊，或重新整理頁面再試一次。</p>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
+    }
+    const root = ReactDOM.createRoot(document.getElementById('root')); root.render(<ErrorBoundary><App /></ErrorBoundary>);
   </script>
 </body>
 </html>
