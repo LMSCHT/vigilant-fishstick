@@ -173,6 +173,7 @@
         let currentYOffset = 0;
         let allStrokes = [], jumpLines = [], flatContinuousPath = []; 
         let lastPoint = null;   
+        let failedChars = [];
         const resolution = 15;
 
         for (let i = 0; i < text.length; i++) {
@@ -216,10 +217,16 @@
                     });
                     if (direction === 'H') currentXOffset += sizeMeters + spacingMeters;
                     else currentYOffset += sizeMeters + spacingMeters;
+                } else {
+                    // 抓字失敗：記錄下來供呼叫端提示，並照正常字寬推進 offset，
+                    // 避免下一個字疊在同一個位置上（先前版本這裡完全沒動作）
+                    failedChars.push(char);
+                    if (direction === 'H') currentXOffset += sizeMeters + spacingMeters;
+                    else currentYOffset += sizeMeters + spacingMeters;
                 }
             }
         }
-        return { allStrokes, jumpLines, flatContinuousPath };
+        return { allStrokes, jumpLines, flatContinuousPath, failedChars };
     };
 
     // 引擎 2：真實外框剪影所需的工具
@@ -520,8 +527,21 @@
             if (isLineSafe(pStart, pEnd, localFlowers, SAFE_R)) {
                 finalLocalPath.push(pEnd);
             } else {
-                // 如果會撞山，就把這兩點跟所有網格放入 Dijkstra 中尋路
-                let currentNodes = [pStart, pEnd, ...nodesPool];
+                // 如果會撞山：只取起訖點附近的候選點餵進 Dijkstra，而不是整個候選點池。
+                // nodesPool 大小隨花朵數線性成長（12 × n），若整包丟進去，
+                // Dijkstra 的節點數、以及每次邊鬆弛呼叫 isLineSafe 的次數都會跟著暴增，
+                // 花朵一多會明顯變慢。這裡用起訖點的 bounding box + 緩衝半徑先篩過一輪，
+                // 通常繞路只需要鄰近的候選點就夠了，真的找不到再退回全池搜尋。
+                const margin = SAFE_R * 3;
+                const minX = Math.min(pStart.x, pEnd.x) - margin;
+                const maxX = Math.max(pStart.x, pEnd.x) + margin;
+                const minY = Math.min(pStart.y, pEnd.y) - margin;
+                const maxY = Math.max(pStart.y, pEnd.y) + margin;
+                let localCandidates = nodesPool.filter(c => c.x >= minX && c.x <= maxX && c.y >= minY && c.y <= maxY);
+                // 極端情況（附近真的沒有任何安全候選點）才退回全池，維持原本的正確性保底
+                if (localCandidates.length === 0) localCandidates = nodesPool;
+
+                let currentNodes = [pStart, pEnd, ...localCandidates];
                 let subPath = findShortestPath(0, 1, currentNodes, localFlowers, SAFE_R);
                 if (subPath && subPath.length > 1) {
                     for (let k = 1; k < subPath.length; k++) {
@@ -561,6 +581,25 @@
     const getTimestamp = () => {
       const d = new Date();
       return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
+    };
+
+    // --- 共用 GPX / CSV / 下載工具（原本三個模式各寫一份，抽成單一實作） ---
+    // points: [{lat, lon, name?}] ; name 省略時該 <trkpt> 不輸出 <n> 標籤（對應 Mode3 的無名稱寫法）
+    const pointsToGPX = (points, trackName, creator = 'V38.5') => {
+      let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="${creator}">\n  <trk><name>${trackName}</name><trkseg>\n`;
+      points.forEach(p => {
+        const nameTag = p.name ? `<name>${p.name}</name>` : '';
+        xml += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}">${nameTag}</trkpt>\n`;
+      });
+      xml += `  </trkseg></trk></gpx>`;
+      return xml;
+    };
+    const pointsToCSV = (points) => points.map(p => `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`).join('\n') + (points.length ? '\n' : '');
+    const downloadFile = (content, filename, mime) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([content], { type: mime }));
+      a.download = filename;
+      a.click();
     };
 
     const getTheme = (type, isDark) => {
@@ -905,33 +944,22 @@
         setLoading(true);
         setTimeout(() => {
           try {
-            let pGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38.5">\n  <trk><name>Planting_${patternType}</name><trkseg>\n`;
-            let pCsv = '';
+            const plantingPts = [];
             points.forEach((pt, idx) => {
               const np = `F${String(idx + 1).padStart(2, '0')}`;
-              getFlwPts(pt, idx, points).forEach((p, i) => {
-                  pGpx += `    <trkpt lat="${p.l.toFixed(6)}" lon="${p.n.toFixed(6)}"><name>${np}_P${i+1}</name></trkpt>\n`;
-                  pCsv += `${p.l.toFixed(6)}, ${p.n.toFixed(6)}\n`;
-              });
+              getFlwPts(pt, idx, points).forEach((p, i) => plantingPts.push({ lat: p.l, lon: p.n, name: `${np}_P${i+1}` }));
             });
-            pGpx += `  </trkseg></trk></gpx>`;
+            const pGpx = pointsToGPX(plantingPts, `Planting_${patternType}`);
+            const pCsv = pointsToCSV(plantingPts);
 
-            let fGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38.5">\n  <trk><name>Fruit_Offset</name><trkseg>\n`;
-            let fCsv = '';
             const offsetPts = calcFruitOffsetPath(points, harvestDist, offsetSide);
-            offsetPts.forEach((fp, idx) => {
-              fGpx += `    <trkpt lat="${fp.lat.toFixed(6)}" lon="${fp.lon.toFixed(6)}"><name>Fruit_P${idx+1}</name></trkpt>\n`;
-              fCsv += `${fp.lat.toFixed(6)}, ${fp.lon.toFixed(6)}\n`;
-            });
-            fGpx += `  </trkseg></trk></gpx>`;
+            const fruitPts = offsetPts.map((fp, idx) => ({ lat: fp.lat, lon: fp.lon, name: `Fruit_P${idx+1}` }));
+            const fGpx = pointsToGPX(fruitPts, 'Fruit_Offset');
+            const fCsv = pointsToCSV(fruitPts);
 
-            let puGpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38.5">\n  <trk><name>Pure_Flowers</name><trkseg>\n`;
-            let puCsv = '';
-            points.forEach((pt, idx) => {
-              puGpx += `    <trkpt lat="${pt.lat.toFixed(6)}" lon="${pt.lon.toFixed(6)}"><name>F${idx+1}</name></trkpt>\n`;
-              puCsv += `${pt.lat.toFixed(6)}, ${pt.lon.toFixed(6)}\n`;
-            });
-            puGpx += `  </trkseg></trk></gpx>`;
+            const purePts = points.map((pt, idx) => ({ lat: pt.lat, lon: pt.lon, name: `F${idx+1}` }));
+            const puGpx = pointsToGPX(purePts, 'Pure_Flowers');
+            const puCsv = pointsToCSV(purePts);
 
             setOutputs({ plantingGpx: pGpx, plantingCsv: pCsv, fruitGpx: fGpx, fruitCsv: fCsv, pureGpx: puGpx, pureCsv: puCsv });
           } catch (e) {
@@ -1074,11 +1102,7 @@
         const tabName = outputTab === 'pure' ? 'Pure' : outputTab === 'planting' ? 'Planting' : 'Fruit';
         const ts = getTimestamp();
         const filename = `M1_${typeName}_${tabName}_${points.length}F_${ts}.${ext}`;
-        
-        const a = document.createElement('a'); 
-        a.href = URL.createObjectURL(new Blob([currentOut], {type: mime})); 
-        a.download = filename; 
-        a.click(); 
+        downloadFile(currentOut, filename, mime);
       };
 
       const handleFlowerClick = (index) => {
@@ -1369,6 +1393,12 @@
                   setIsTextDirty(false);
                   setIsGeneratingText(false);
 
+                  if (body.failedChars && body.failedChars.length > 0) {
+                      // 去重後提示，避免同一個字重複出現在訊息裡
+                      const uniqueFailed = [...new Set(body.failedChars)];
+                      alert(`有 ${body.failedChars.length} 個字元無法取得字型資料，已略過：${uniqueFailed.join('、')}`);
+                  }
+
                   // 延遲置中，確保繪製完成
                   setTimeout(() => {
                       if (mapRef.current && body.flatContinuousPath.length > 0) {
@@ -1477,10 +1507,8 @@
             const td = pts.reduce((acc, p, i) => i===0 ? 0 : acc + calcDistanceKm(pts[i-1], p), 0);
             setStats({ dist: td.toFixed(2), time: Math.round((td / speed) * 60) });
 
-            let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38.5_Map_M2">\n  <trk><name>Sweep_${axis}</name><trkseg>\n`;
-            let csv = '';
-            pts.forEach(p => { xml += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}"><name>${p.name}</name></trkpt>\n`; csv += `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}\n`; });
-            xml += `  </trkseg></trk></gpx>`; 
+            const xml = pointsToGPX(pts, `Sweep_${axis}`, 'V38.5_Map_M2');
+            const csv = pointsToCSV(pts);
             setGpxOut(xml); setCsvOut(csv);
             
             setGeneratedPts(pts);
@@ -1562,15 +1590,9 @@
                 }
                 
                 // 即時更新輸出 (含旋轉過後的座標)
-                let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38.5_Map_M2">\n  <trk><name>Text_Path</name><trkseg>\n`;
-                let csv = '';
-                rotatedFlatPath.forEach(p => { 
-                    const pLat = Array.isArray(p) ? p[0] : p.lat;
-                    const pLon = Array.isArray(p) ? p[1] : p.lon;
-                    xml += `    <trkpt lat="${pLat.toFixed(6)}" lon="${pLon.toFixed(6)}"></trkpt>\n`; 
-                    csv += `${pLat.toFixed(6)}, ${pLon.toFixed(6)}\n`; 
-                });
-                xml += `  </trkseg></trk></gpx>`; 
+                const normPts = rotatedFlatPath.map(p => ({ lat: Array.isArray(p) ? p[0] : p.lat, lon: Array.isArray(p) ? p[1] : p.lon }));
+                const xml = pointsToGPX(normPts, 'Text_Path', 'V38.5_Map_M2');
+                const csv = pointsToCSV(normPts);
                 setGpxOut(xml); setCsvOut(csv);
 
                 // 更新預估里程與時間
@@ -1676,11 +1698,7 @@
         const axisName = config.axis;
         const ts = getTimestamp();
         const filename = `M2_${axisName}_${ts}.${ext}`;
-        
-        const a = document.createElement('a'); 
-        a.href = URL.createObjectURL(new Blob([currentOut], {type: mime})); 
-        a.download = filename; 
-        a.click(); 
+        downloadFile(currentOut, filename, mime);
       };
 
       return (
@@ -1973,9 +1991,9 @@
             setPathData(finalPath);
             if (finalPath.length === 0) { setBadgeText('範圍過小，未能涵蓋網格'); setGpxOut(''); setCsvOut(''); if (resultLayerGroupRef.current) resultLayerGroupRef.current.clearLayers(); setLoading(false); return; }
 
-            let gpxStr = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="V38.5_Mode3">\n  <trk><name>S2_Map_Sweep</name><trkseg>\n`; let csvStr = '';
-            finalPath.forEach(p => { gpxStr += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lng.toFixed(6)}"></trkpt>\n`; csvStr += `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}\n`; });
-            gpxStr += `  </trkseg></trk></gpx>`;
+            const normPath = finalPath.map(p => ({ lat: p.lat, lon: p.lng }));
+            const gpxStr = pointsToGPX(normPath, 'S2_Map_Sweep', 'V38.5_Mode3');
+            const csvStr = pointsToCSV(normPath);
             setGpxOut(gpxStr); setCsvOut(csvStr); setBadgeText(`總計涵蓋 ${finalPath.length} 個 S2 網格`);
 
             const group = resultLayerGroupRef.current; group.clearLayers();
@@ -2026,7 +2044,7 @@
       };
       const dlGPX = () => { 
         if(!currentOut) return; const ext = outputFormat === 'gpx' ? 'gpx' : 'txt'; const mime = outputFormat === 'gpx' ? 'text/xml' : 'text/plain';
-        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([currentOut], {type: mime})); a.download = `M3_S2_L${s2Level}_${getTimestamp()}.${ext}`; a.click(); 
+        downloadFile(currentOut, `M3_S2_L${s2Level}_${getTimestamp()}.${ext}`, mime);
       };
 
       return (
