@@ -1305,7 +1305,7 @@
       const mapRef = useRef(null);
       const layerGroupRef = useRef(null);
       
-      const [config, setConfig] = useStickyState({ startCoord: '', width: '1.5', rows: '20', axis: 'LINE', sweepDir: 'R', advDir: 'F', speedKmH: 18, angle: 0, layers: 1 }, 'pikmin_v38.5_m2_config');
+      const [config, setConfig] = useStickyState({ startCoord: '', width: '1.5', rows: '20', axis: 'LINE', sweepDir: 'R', advDir: 'F', speedKmH: 18, angle: 0, layers: 1, lineSpacingM: 78, circleSpacingM: 35 }, 'pikmin_v38.5_m2_config');
       const configRef = useRef(config);
       useEffect(() => { configRef.current = config; }, [config]);
 
@@ -1424,7 +1424,18 @@
         setTimeout(() => {
           try {
             const activeConfig = overrideConfig || configRef.current;
-            const { startCoord, width: wStr, rows: rStr, axis, sweepDir, advDir, speedKmH, angle, layers } = activeConfig;
+            const { startCoord, width: wStr, rows: rStr, axis, sweepDir, advDir, speedKmH, angle, layers, lineSpacingM, circleSpacingM } = activeConfig;
+
+            // 自訂線段間距：25m 是滿員種花矩形（5×6格≈25m×30m）在最窄軸向上的絕對安全下限，
+            // 低於這個值兩條掃線的種花範圍會重疊，導致外側花朵踩進內側的 5 分鐘冷卻格種不下去。
+            // 未設定（例如舊版 localStorage 存檔沒有這個欄位）時，退回原本寫死的預設值，維持既有行為不變。
+            let lineSpacingMeters = parseFloat(lineSpacingM);
+            if (!isFinite(lineSpacingMeters)) lineSpacingMeters = CONSTANTS.S2_SPACING_KM * 1000;
+            if (lineSpacingMeters < 25) lineSpacingMeters = 25;
+
+            let circleSpacingMeters = parseFloat(circleSpacingM);
+            if (!isFinite(circleSpacingMeters)) circleSpacingMeters = 35;
+            if (circleSpacingMeters < 25) circleSpacingMeters = 25;
             
             if (!startCoord) { setLoading(false); return; }
             const match = startCoord.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
@@ -1455,7 +1466,7 @@
                 pts.push({ lat: lat, lon: lon, name: 'Center' }); 
                 const layersCount = parseInt(layers, 10) || 1;
                 for (let l = 0; l < layersCount; l++) {
-                    const rMeters = 20 + l * 35; 
+                    const rMeters = 20 + l * circleSpacingMeters; 
                     const segments = 36; 
                     for (let i = 0; i <= segments; i++) {
                         const theta = (i / segments) * 2 * Math.PI;
@@ -1481,17 +1492,17 @@
                 let localPts = [];
 
                 for (let i = 0; i < r; i++) {
-                    let y = i * CONSTANTS.S2_SPACING_KM * 1000 * dirY;
+                    let y = i * lineSpacingMeters * dirY;
                     let xStart = i % 2 === 0 ? 0 : wMeters * dirX;
                     let xEnd = i % 2 === 0 ? wMeters * dirX : 0;
                     localPts.push({x: xStart, y: y, n: `L${i+1}_1`}, {x: xEnd, y: y, n: `L${i+1}_2`});
                 }
 
                 if (axis === 'GRID') {
-                    const cols = Math.ceil(wMeters / (CONSTANTS.S2_SPACING_KM * 1000)) + 1;
-                    const hMaxY = (r - 1) * CONSTANTS.S2_SPACING_KM * 1000 * dirY;
+                    const cols = Math.ceil(wMeters / lineSpacingMeters) + 1;
+                    const hMaxY = (r - 1) * lineSpacingMeters * dirY;
                     for (let i = 0; i < cols; i++) {
-                        let x = i * CONSTANTS.S2_SPACING_KM * 1000 * dirX;
+                        let x = i * lineSpacingMeters * dirX;
                         let yStart = i % 2 === 0 ? 0 : hMaxY;
                         let yEnd = i % 2 === 0 ? hMaxY : 0;
                         localPts.push({x: x, y: yStart, n: `V${i+1}_1`}, {x: x, y: yEnd, n: `V${i+1}_2`});
@@ -1812,15 +1823,19 @@
                 </div>
               ) : (
                 <>
-                  <div className={`grid ${config.axis === 'CIRCLE' ? 'grid-cols-2' : 'grid-cols-3'} gap-3 mb-4`}>
+                  <div className={`grid grid-cols-2 gap-3 mb-4`}>
                     {config.axis !== 'CIRCLE' && (
                       <>
                         <div><label className="text-xs text-slate-500 block mb-1.5">單線長度(km)</label><input type="number" step="0.1" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={config.width} onChange={(e)=>setConfig({...config, width: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
                         <div><label className="text-xs text-slate-500 block mb-1.5">平行線數量</label><input type="number" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={config.rows} onChange={(e)=>setConfig({...config, rows: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
+                        <div><label className="text-xs text-slate-500 block mb-1.5">線距(m)<span className="text-slate-400 font-normal"> ・下限25</span></label><input type="number" min="25" step="1" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={config.lineSpacingM ?? 78} onChange={(e)=>setConfig({...config, lineSpacingM: e.target.value})} onBlur={(e)=>{let v = parseFloat(e.target.value); if(!isFinite(v) || v < 25) v = 25; const n = {...config, lineSpacingM: v}; setConfig(n); generateGrid(n, false);}} /></div>
                       </>
                     )}
                     {config.axis === 'CIRCLE' && (
-                      <div><label className="text-xs text-slate-500 block mb-1.5 font-bold text-purple-500"><i className="fas fa-bullseye mr-1"></i>同心圓外擴層數</label><input type="number" min="1" max="20" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 font-bold ${isDark ? 'bg-slate-900 border-purple-500/50 text-purple-300 focus:border-purple-400' : 'bg-purple-50 border-purple-300 text-purple-700 focus:border-purple-500'}`} value={config.layers || 1} onChange={(e)=>{let v = parseInt(e.target.value)||1; if(v<1)v=1; setConfig({...config, layers: v})}} onBlur={()=>generateGrid(null, false)} /></div>
+                      <>
+                        <div><label className="text-xs text-slate-500 block mb-1.5 font-bold text-purple-500"><i className="fas fa-bullseye mr-1"></i>同心圓外擴層數</label><input type="number" min="1" max="20" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 font-bold ${isDark ? 'bg-slate-900 border-purple-500/50 text-purple-300 focus:border-purple-400' : 'bg-purple-50 border-purple-300 text-purple-700 focus:border-purple-500'}`} value={config.layers || 1} onChange={(e)=>{let v = parseInt(e.target.value)||1; if(v<1)v=1; setConfig({...config, layers: v})}} onBlur={()=>generateGrid(null, false)} /></div>
+                        <div><label className="text-xs text-slate-500 block mb-1.5 font-bold text-purple-500"><i className="fas fa-bullseye mr-1"></i>圈距(m)<span className="text-slate-400 font-normal"> ・下限25</span></label><input type="number" min="25" step="1" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 font-bold ${isDark ? 'bg-slate-900 border-purple-500/50 text-purple-300 focus:border-purple-400' : 'bg-purple-50 border-purple-300 text-purple-700 focus:border-purple-500'}`} value={config.circleSpacingM ?? 35} onChange={(e)=>setConfig({...config, circleSpacingM: e.target.value})} onBlur={(e)=>{let v = parseFloat(e.target.value); if(!isFinite(v) || v < 25) v = 25; const n = {...config, circleSpacingM: v}; setConfig(n); generateGrid(n, false);}} /></div>
+                      </>
                     )}
                     <div><label className="text-xs text-slate-500 block mb-1.5">時速(km/h)</label><input type="number" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={config.speedKmH} onChange={(e)=>setConfig({...config, speedKmH: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
                   </div>
