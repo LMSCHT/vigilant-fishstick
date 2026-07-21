@@ -639,6 +639,44 @@
       return [value, setValue];
     }
 
+    // --- 共用非阻塞浮動提示條 hook（取代 alert()）---
+    // type: 'error' | 'warning' | 'success' | 'info'，預設 3500ms 後自動消失，傳 0 則不自動消失
+    function useToast(defaultDuration = 3500) {
+      const [toast, setToast] = useState(null);
+      const timerRef = useRef(null);
+      const showToast = useCallback((text, type = 'error', duration = defaultDuration) => {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        setToast({ text, type });
+        if (duration > 0) {
+          timerRef.current = setTimeout(() => setToast(null), duration);
+        }
+      }, [defaultDuration]);
+      useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+      return [toast, showToast];
+    }
+
+    // 共用浮動提示條 UI：error/warning 用玫瑰紅、success 用翠綠、info 用素色，樣式沿用 Mode1 診斷訊息的配色慣例
+    function Toast({ toast, isDark }) {
+      if (!toast) return null;
+      const styleMap = {
+        error:   isDark ? 'bg-rose-600 text-white' : 'bg-rose-100 text-rose-800 border border-rose-300',
+        warning: isDark ? 'bg-rose-600 text-white' : 'bg-rose-100 text-rose-800 border border-rose-300',
+        success: isDark ? 'bg-emerald-600 text-white' : 'bg-emerald-100 text-emerald-800 border border-emerald-300',
+        info:    isDark ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-800 border border-slate-300',
+      };
+      const iconMap = {
+        error: 'fa-exclamation-triangle',
+        warning: 'fa-exclamation-triangle',
+        success: 'fa-check-circle',
+        info: 'fa-info-circle',
+      };
+      return (
+        <div className={`absolute top-4 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full z-[1000] flex items-center gap-2 font-bold text-sm shadow-md dark:shadow-xl transition-colors duration-300 max-w-[90%] text-center ${styleMap[toast.type] || styleMap.error}`}>
+          <i className={`fas ${iconMap[toast.type] || iconMap.error}`}></i>{toast.text}
+        </div>
+      );
+    }
+
     // --- SVG Map Interaction Hook ---
     function useInteractiveMap(svgRef, transformRef, setTransform) {
       useEffect(() => {
@@ -1317,6 +1355,7 @@
       const [copied, setCopied] = useState(false);
       const [stats, setStats] = useState({ dist: 0, time: 0 });
       const [loading, setLoading] = useState(false);
+      const [toast, showToast] = useToast();
 
       // --- 文字路徑雙引擎專用狀態 ---
       const [textStyle, setTextStyle] = useStickyState('outline', 'pikmin_v38.5_text_style'); // 'skeleton' 或 'outline'
@@ -1359,7 +1398,7 @@
                   setFontName(`本機字型 (${name})`);
                   setIsTextDirty(true);
               } catch (err) {
-                  alert('字型解析失敗，請確認檔案格式是否為標準 TTF/OTF/WOFF。');
+                  showToast('字型解析失敗，請確認檔案格式是否為標準 TTF/OTF/WOFF。', 'error');
                   console.error(err);
               }
           };
@@ -1372,10 +1411,10 @@
 
       const handleGenerateText = async () => {
           if (!textInput || !config.startCoord) return;
-          if (textStyle === 'outline' && !opentypeFont) return alert('請先等待線上字型載入或手動上傳字型！');
+          if (textStyle === 'outline' && !opentypeFont) { showToast('請先等待線上字型載入或手動上傳字型！', 'error'); return; }
           
           const match = config.startCoord.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
-          if (!match) return alert('請輸入有效的起點座標格式！');
+          if (!match) { showToast('請輸入有效的起點座標格式！', 'error'); return; }
           const lat = parseFloat(match[1]); const lon = parseFloat(match[2]);
 
           setIsGeneratingText(true);
@@ -1396,7 +1435,7 @@
                   if (body.failedChars && body.failedChars.length > 0) {
                       // 去重後提示，避免同一個字重複出現在訊息裡
                       const uniqueFailed = [...new Set(body.failedChars)];
-                      alert(`有 ${body.failedChars.length} 個字元無法取得字型資料，已略過：${uniqueFailed.join('、')}`);
+                      showToast(`有 ${body.failedChars.length} 個字元無法取得字型資料，已略過：${uniqueFailed.join('、')}`, 'warning', 6000);
                   }
 
                   // 延遲置中，確保繪製完成
@@ -1413,7 +1452,7 @@
                   }, 100);
               } catch (e) {
                   console.error(e);
-                  alert('產生文字路徑時發生錯誤：' + e.message);
+                  showToast('產生文字路徑時發生錯誤：' + e.message, 'error');
                   setIsGeneratingText(false);
               }
           }, 50);
@@ -1439,9 +1478,9 @@
             
             if (!startCoord) { setLoading(false); return; }
             const match = startCoord.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
-            if (!match) { if(autoFit) alert('請輸入有效的起點座標格式！'); setLoading(false); return; }
+            if (!match) { if(autoFit) showToast('請輸入有效的起點座標格式！', 'error'); setLoading(false); return; }
             const lat = parseFloat(match[1]); const lon = parseFloat(match[2]);
-            if (!isValidCoord(lat, lon)) { if(autoFit) alert('座標數值超出範圍！'); setLoading(false); return; }
+            if (!isValidCoord(lat, lon)) { if(autoFit) showToast('座標數值超出範圍！', 'error'); setLoading(false); return; }
 
             // 文字模式防呆：跳過一般幾何運算
             if (axis === 'TEXT') {
@@ -1530,7 +1569,7 @@
             }
           } catch (err) {
             console.error(err);
-            if(autoFit) alert('生成發生錯誤，請檢查參數！');
+            if(autoFit) showToast('生成發生錯誤，請檢查參數！', 'error');
           } finally {
             setLoading(false);
           }
@@ -1612,643 +1651,4 @@
                 for(let i=1; i<rotatedFlatPath.length; i++) {
                     const p1 = rotatedFlatPath[i-1]; const p2 = rotatedFlatPath[i];
                     const p1Lat = Array.isArray(p1) ? p1[0] : p1.lat; const p1Lon = Array.isArray(p1) ? p1[1] : p1.lon;
-                    const p2Lat = Array.isArray(p2) ? p2[0] : p2.lat; const p2Lon = Array.isArray(p2) ? p2[1] : p2.lon;
-                    totalD += calcDistanceKm({lat: p1Lat, lon: p1Lon}, {lat: p2Lat, lon: p2Lon});
-                }
-                setStats({ dist: totalD.toFixed(2), time: Math.round((totalD / speed) * 60) });
-            }
-
-        } else if (config.axis !== 'TEXT' && generatedPts.length > 0) {
-           const latlngs = generatedPts.map(p => [p.lat, p.lon]);
-           const pathColor = isDark ? '#3b82f6' : '#2563eb';
-           const isCircle = config.axis === 'CIRCLE';
-           
-           L.polyline(latlngs, {
-             color: pathColor, weight: 3, opacity: 0.8, dashArray: isCircle ? 'none' : '8, 8'
-           }).addTo(group);
-
-           L.circleMarker(latlngs[0], { 
-             radius: 6, color: '#16a34a', fillColor: '#16a34a', fillOpacity: 1 
-           }).bindPopup(isCircle ? "圓心" : "起點").addTo(group);
-           
-           L.circleMarker(latlngs[latlngs.length - 1], { radius: 6, color: '#dc2626', fillColor: '#dc2626', fillOpacity: 1 }).bindPopup("終點").addTo(group);
-        }
-      }, [generatedPts, isDark, config.axis, config.angle, config.startCoord, cachedTextBody, showRealPath]);
-
-      const searchLocation = async () => {
-        if (!searchQuery) return;
-        setLoading(true);
-        try {
-          const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}`);
-          const data = await response.json();
-          if (data && data.length > 0) {
-            const lat = parseFloat(data[0].lat); const lon = parseFloat(data[0].lon);
-            if (mapRef.current) mapRef.current.flyTo([lat, lon], 16, { duration: 1.5 });
-          } else {
-            alert('找不到該地點，請嘗試其他關鍵字');
-          }
-        } catch (e) {
-          console.error('Search error:', e);
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      const locateMe = () => {
-        if (!navigator.geolocation) return alert('您的瀏覽器不支援定位功能');
-        setLoading(true);
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            const lat = position.coords.latitude; const lng = position.coords.longitude;
-            if (mapRef.current) mapRef.current.flyTo([lat, lng], 16, { duration: 1.5 });
-            setLoading(false);
-          },
-          (error) => {
-            alert('無法取得位置，請確認瀏覽器定位權限');
-            setLoading(false);
-          },
-          { enableHighAccuracy: true, timeout: 5000 }
-        );
-      };
-
-      const centerPath = () => {
-        if (mapRef.current) {
-            if (config.axis === 'TEXT' && cachedTextBody && cachedTextBody.flatContinuousPath.length > 0) {
-                 const centerMatch = config.startCoord.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
-                 if (centerMatch) {
-                     const centerLat = parseFloat(centerMatch[1]);
-                     const centerLon = parseFloat(centerMatch[2]);
-                     const rotatedFlatPath = rotatePoints(cachedTextBody.flatContinuousPath, centerLat, centerLon, config.angle || 0);
-                     const bounds = L.latLngBounds(rotatedFlatPath.map(p => [Array.isArray(p)?p[0]:p.lat, Array.isArray(p)?p[1]:p.lon]));
-                     mapRef.current.fitBounds(bounds, { padding: [30, 30] });
-                 }
-            } else if (generatedPts.length > 0) {
-                const bounds = L.latLngBounds(generatedPts.map(p => [p.lat, p.lon]));
-                mapRef.current.fitBounds(bounds, { padding: [30, 30] });
-            }
-        }
-      };
-
-      const currentOut = outputFormat === 'gpx' ? gpxOut : csvOut;
-      
-      const copyToClipboard = () => { 
-        if(!currentOut) return;
-        if (navigator.clipboard && window.isSecureContext) {
-          navigator.clipboard.writeText(currentOut)
-            .then(() => { setCopied(true); setTimeout(()=>setCopied(false), 2000); })
-            .catch((err) => { console.error("複製失敗", err); legacyCopyFallback(currentOut, setCopied); });
-        } else {
-          legacyCopyFallback(currentOut, setCopied);
-        }
-      };
-      
-      const dlGPX = () => { 
-        if(!currentOut) return;
-        const ext = outputFormat === 'gpx' ? 'gpx' : 'txt';
-        const mime = outputFormat === 'gpx' ? 'text/xml' : 'text/plain';
-        const axisName = config.axis;
-        const ts = getTimestamp();
-        const filename = `M2_${axisName}_${ts}.${ext}`;
-        downloadFile(currentOut, filename, mime);
-      };
-
-      return (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-0 pb-4 relative transition-colors duration-300">
-          {loading && (
-            <div className={`absolute inset-0 z-[1000] rounded-xl flex items-center justify-center backdrop-blur-sm transition-colors duration-300 ${isDark ? 'bg-slate-900/40' : 'bg-slate-200/60'}`}>
-              <i className={`fas fa-spinner fa-spin text-3xl ${isDark ? 'text-blue-400' : 'text-slate-800'}`}></i>
-              <span className={`ml-3 font-bold tracking-widest text-sm ${isDark ? 'text-blue-400' : 'text-slate-800'}`}>運算中...</span>
-            </div>
-          )}
-          
-          <div className="order-2 lg:order-1 lg:col-span-4 flex flex-col gap-4 h-auto lg:h-full lg:min-h-[600px] z-20">
-            <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <h2 className={`text-sm sm:text-base font-bold mb-3 flex items-center gap-2 ${isDark ? 'text-blue-400' : 'text-slate-800'}`}><i className="fas fa-crosshairs"></i>幾何與文字佈線</h2>
-              
-              <div className="flex gap-2 mb-4">
-                <input type="text" className={`flex-grow border rounded-lg p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-slate-50 border-slate-300 focus:border-slate-400 text-slate-800 focus:bg-white'}`} value={searchQuery} onChange={(e)=>setSearchQuery(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && searchLocation()} placeholder="搜尋起點 (如: 台北車站)" />
-                <button onClick={searchLocation} className={`px-4 rounded-lg border transition-colors duration-300 shadow-sm text-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-white' : 'bg-white hover:bg-slate-50 border-slate-300 text-slate-700'}`} title="搜尋"><i className="fas fa-search"></i></button>
-                <button onClick={locateMe} className={`px-4 rounded-lg border transition-colors duration-300 shadow-sm text-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-blue-400' : 'bg-white hover:bg-slate-50 border-slate-300 text-blue-600'}`} title="定位我的位置"><i className="fas fa-location-arrow"></i></button>
-              </div>
-
-              <input type="text" className={`w-full border rounded p-2 text-sm outline-none mb-3 focus:outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-slate-50 border-slate-300 focus:border-slate-400 text-slate-800 focus:bg-white'}`} value={config.startCoord} onChange={(e)=>setConfig({...config, startCoord: e.target.value})} placeholder="請輸入起點座標..." />
-              
-              <div className="flex rounded border overflow-hidden mb-3 transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-600 shadow-none dark:shadow-inner">
-                <button onClick={()=>{const n={...config, axis:'LINE'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-2 text-xs font-bold transition-colors ${config.axis==='LINE' ? (isDark ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-slate-500 hover:text-slate-700')}`}>單向平行</button>
-                <button onClick={()=>{const n={...config, axis:'GRID'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-2 text-xs font-bold transition-colors ${config.axis==='GRID' ? (isDark ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-slate-500 hover:text-slate-700')}`}>矩陣棋盤</button>
-                <button onClick={()=>{const n={...config, axis:'CIRCLE'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-2 text-xs font-bold transition-colors ${config.axis==='CIRCLE' ? (isDark ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-slate-500 hover:text-slate-700')}`}>同心圓</button>
-                <button onClick={()=>{const n={...config, axis:'TEXT'}; setConfig(n); generateGrid(n, false);}} className={`flex-1 py-2 text-xs font-bold transition-colors ${config.axis==='TEXT' ? (isDark ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-700' : 'text-slate-500 hover:text-slate-700')}`}>文字路徑</button>
-              </div>
-
-              {config.axis === 'TEXT' ? (
-                <div className="space-y-3 mb-4">
-                  {/* 風格大切換面板 */}
-                  <div className="flex rounded-lg border overflow-hidden transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-600">
-                      <button onClick={() => setTextStyle('skeleton')} className={`flex-1 py-2 text-xs font-bold transition-colors ${textStyle==='skeleton' ? (isDark ? 'bg-amber-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:text-slate-700')}`}><i className="fas fa-pen-nib mr-1.5"></i> 單線骨架</button>
-                      <button onClick={() => setTextStyle('outline')} className={`flex-1 py-2 text-xs font-bold transition-colors ${textStyle==='outline' ? (isDark ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:text-slate-700')}`}><i className="fas fa-font mr-1.5"></i> 外框剪影</button>
-                  </div>
-
-                  {/* 新增：文字方向切換面板 */}
-                  <div className="flex rounded-lg border overflow-hidden transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-600">
-                      <button onClick={() => setTextDir('H')} className={`flex-1 py-2 text-xs font-bold transition-colors ${textDir==='H' ? (isDark ? 'bg-slate-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:text-slate-700')}`}><i className="fas fa-arrows-alt-h mr-1.5"></i> 橫向寫字</button>
-                      <button onClick={() => setTextDir('V')} className={`flex-1 py-2 text-xs font-bold transition-colors ${textDir==='V' ? (isDark ? 'bg-slate-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:text-slate-700')}`}><i className="fas fa-arrows-alt-v mr-1.5"></i> 縱向寫字</button>
-                  </div>
-
-                  {/* 全新字型設定面板 (僅在 outline 模式顯示) */}
-                  {textStyle === 'outline' && (
-                      <div className={`p-3 rounded-lg border transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
-                          <h3 className={`text-xs font-bold mb-2 flex items-center ${isDark ? 'text-blue-400' : 'text-slate-800'}`}>
-                              <i className="fas fa-font mr-1.5"></i> 字型設定 (支援中文字型檔)
-                          </h3>
-                          <div className="flex flex-col sm:flex-row items-center gap-2">
-                              <div className="flex-1 w-full min-w-0">
-                                  <span className={`block text-xs font-mono p-2 border rounded font-bold truncate transition-colors duration-300 ${fontName.includes('本機') ? (isDark ? 'bg-emerald-900/50 text-emerald-400 border-emerald-700' : 'bg-white text-emerald-600 border-emerald-300') : (isDark ? 'bg-slate-800 text-blue-400 border-slate-600' : 'bg-white text-blue-600 border-blue-300')}`}>
-                                      {fontName}
-                                  </span>
-                              </div>
-                              <div className="relative w-full sm:w-auto shrink-0">
-                                  <input type="file" accept=".ttf, .otf, .woff" onChange={handleFontUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                                  <button className={`w-full sm:w-auto font-bold px-4 py-2 rounded shadow-sm text-xs flex items-center justify-center gap-2 transition-colors ${isDark ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}>
-                                      <i className="fas fa-folder-open"></i> 讀取本機字型
-                                  </button>
-                              </div>
-                          </div>
-                          <p className={`text-xs mt-2.5 font-bold ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>
-                              <i className="fas fa-exclamation-circle mr-1"></i>
-                              提醒：預設字體僅支援英數。若要生成「中文字」外框，請務必先點擊上方按鈕讀取本機中文字型檔！
-                          </p>
-                      </div>
-                  )}
-
-                  <div>
-                      <label className="text-xs text-slate-500 block mb-1.5">欲生成的文字 (支援中英數)</label>
-                      <input type="text" value={textInput} onChange={(e) => setTextInput(e.target.value)} placeholder={textStyle === 'outline' ? "請輸入文字 (中文請先確認已掛載中文字型)" : "請輸入文字"} className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-slate-50 border-slate-300 focus:border-slate-400 text-slate-800 focus:bg-white'}`} />
-                  </div>
-                  
-                  <div className={`grid ${textStyle === 'skeleton' ? 'grid-cols-3' : 'grid-cols-2'} gap-3`}>
-                      <div>
-                          <label className="text-xs text-slate-500 block mb-1.5">字高 (公尺)</label>
-                          <input type="number" value={textHeight} onChange={(e) => setTextHeight(e.target.value)} className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-slate-50 border-slate-300 focus:border-slate-400 text-slate-800 focus:bg-white'}`} />
-                      </div>
-                      
-                      {textStyle === 'skeleton' && (
-                          <div>
-                              <label className="text-xs text-slate-500 block mb-1.5">字距 (公尺)</label>
-                              <input type="number" value={textSpacing} onChange={(e) => setTextSpacing(e.target.value)} className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-slate-50 border-slate-300 focus:border-slate-400 text-slate-800 focus:bg-white'}`} />
-                          </div>
-                      )}
-                      
-                      <div>
-                          <label className="text-xs text-slate-500 block mb-1.5">時速 (km/h)</label>
-                          <input type="number" value={config.speedKmH} onChange={(e) => setConfig({...config, speedKmH: e.target.value})} className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-slate-50 border-slate-300 focus:border-slate-400 text-slate-800 focus:bg-white'}`} />
-                      </div>
-                  </div>
-                  
-                  <div className={`flex items-center gap-2 mt-2 p-3 rounded-md border transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
-                      <input type="checkbox" id="realPathToggle" checked={showRealPath} onChange={(e) => setShowRealPath(e.target.checked)} className={`w-4 h-4 rounded cursor-pointer ${isDark ? 'accent-blue-600' : 'accent-slate-800'}`} />
-                      <label htmlFor="realPathToggle" className={`text-xs font-bold cursor-pointer select-none ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                          ☑️ 真實路徑預覽 (單色實線 GPX 視角)
-                      </label>
-                  </div>
-
-                  <button onClick={handleGenerateText} disabled={isGeneratingText} className={`w-full py-2.5 rounded-lg text-sm font-bold shadow-sm transition-colors flex items-center justify-center ${isGeneratingText ? (isDark ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500') : isTextDirty ? (isDark ? (textStyle === 'skeleton' ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white') : 'bg-slate-800 hover:bg-slate-700 text-white') : (isDark ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500')}`}>
-                      {isGeneratingText ? (
-                          <span><i className="fas fa-spinner fa-spin mr-2"></i> 演算資料中...</span>
-                      ) : isTextDirty ? (
-                          <span><i className="fas fa-search-location mr-2 text-yellow-300"></i> ✨ 演算{textStyle === 'skeleton' ? '骨架' : '外框'}路徑並預覽</span>
-                      ) : (
-                          <span><i className="fas fa-check mr-2"></i> ✓ 已是最新路徑 (可調整下方旋轉)</span>
-                      )}
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <div className={`grid grid-cols-2 gap-3 mb-4`}>
-                    {config.axis !== 'CIRCLE' && (
-                      <>
-                        <div><label className="text-xs text-slate-500 block mb-1.5">單線長度(km)</label><input type="number" step="0.1" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={config.width} onChange={(e)=>setConfig({...config, width: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
-                        <div><label className="text-xs text-slate-500 block mb-1.5">平行線數量</label><input type="number" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={config.rows} onChange={(e)=>setConfig({...config, rows: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
-                        <div><label className="text-xs text-slate-500 block mb-1.5">線距(m)<span className="text-slate-400 font-normal"> ・下限25</span></label><input type="number" min="25" step="1" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={config.lineSpacingM ?? 78} onChange={(e)=>setConfig({...config, lineSpacingM: e.target.value})} onBlur={(e)=>{let v = parseFloat(e.target.value); if(!isFinite(v) || v < 25) v = 25; const n = {...config, lineSpacingM: v}; setConfig(n); generateGrid(n, false);}} /></div>
-                      </>
-                    )}
-                    {config.axis === 'CIRCLE' && (
-                      <>
-                        <div><label className="text-xs text-slate-500 block mb-1.5 font-bold text-purple-500"><i className="fas fa-bullseye mr-1"></i>同心圓外擴層數</label><input type="number" min="1" max="20" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 font-bold ${isDark ? 'bg-slate-900 border-purple-500/50 text-purple-300 focus:border-purple-400' : 'bg-purple-50 border-purple-300 text-purple-700 focus:border-purple-500'}`} value={config.layers || 1} onChange={(e)=>{let v = parseInt(e.target.value)||1; if(v<1)v=1; setConfig({...config, layers: v})}} onBlur={()=>generateGrid(null, false)} /></div>
-                        <div><label className="text-xs text-slate-500 block mb-1.5 font-bold text-purple-500"><i className="fas fa-bullseye mr-1"></i>圈距(m)<span className="text-slate-400 font-normal"> ・下限25</span></label><input type="number" min="25" step="1" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 font-bold ${isDark ? 'bg-slate-900 border-purple-500/50 text-purple-300 focus:border-purple-400' : 'bg-purple-50 border-purple-300 text-purple-700 focus:border-purple-500'}`} value={config.circleSpacingM ?? 35} onChange={(e)=>setConfig({...config, circleSpacingM: e.target.value})} onBlur={(e)=>{let v = parseFloat(e.target.value); if(!isFinite(v) || v < 25) v = 25; const n = {...config, circleSpacingM: v}; setConfig(n); generateGrid(n, false);}} /></div>
-                      </>
-                    )}
-                    <div><label className="text-xs text-slate-500 block mb-1.5">時速(km/h)</label><input type="number" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={config.speedKmH} onChange={(e)=>setConfig({...config, speedKmH: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
-                  </div>
-                  {config.axis !== 'CIRCLE' && (
-                    <div className="grid grid-cols-2 gap-3 mb-4">
-                      <select className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white shadow-inner focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={config.sweepDir} onChange={(e)=>{const n={...config, sweepDir: e.target.value}; setConfig(n); generateGrid(n, false);}}>
-                          <option value="R">向右畫線 (→)</option>
-                          <option value="L">向左畫線 (←)</option>
-                      </select>
-                      <select className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white shadow-inner focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={config.advDir} onChange={(e)=>{const n={...config, advDir: e.target.value}; setConfig(n); generateGrid(n, false);}}>
-                          <option value="F">向前推進 (↑)</option>
-                          <option value="B">向後推進 (↓)</option>
-                      </select>
-                    </div>
-                  )}
-                  <button onClick={()=>generateGrid(null, true)} disabled={loading} className={`w-full text-white font-bold py-2.5 rounded-lg active:scale-95 transition text-sm disabled:opacity-50 ${isDark ? 'bg-blue-600 hover:brightness-110 shadow-lg' : 'bg-slate-800 hover:bg-slate-700 shadow-sm'}`}><i className="fas fa-search-location mr-2"></i>生成並置中預覽</button>
-                </>
-              )}
-
-              <div className="my-4 bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-200 dark:border-slate-700 shadow-inner transition-colors duration-300">
-                <div className="flex justify-between items-center mb-2">
-                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400"><i className="fas fa-sync-alt mr-1"></i>網格/文字旋轉微調</label>
-                  <div className="flex items-center gap-1.5">
-                    <input type="number" min="0" max="359" className={`w-14 text-center border rounded p-1 text-sm outline-none transition-colors duration-300 font-mono ${isDark ? 'bg-slate-800 border-slate-600 text-blue-400 focus:border-blue-500' : 'bg-white border-slate-300 text-slate-700 focus:border-slate-400'}`} value={config.angle || 0} onChange={(e)=>{const n={...config, angle: parseInt(e.target.value)||0}; setConfig(n); generateGrid(n, false);}} />
-                    <span className="text-xs text-slate-500 dark:text-slate-500 font-bold">°</span>
-                  </div>
-                </div>
-                <input type="range" min="0" max="359" className={`w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer transition-colors duration-300 ${isDark ? 'accent-blue-600 hover:accent-blue-500' : 'accent-slate-800 hover:accent-slate-700'}`} value={config.angle || 0} onChange={(e)=>{const n={...config, angle: parseInt(e.target.value)||0}; setConfig(n); generateGrid(n, false);}} />
-              </div>
-
-            </div>
-            
-            <div className="flex-1 p-4 rounded-xl border flex flex-col min-h-[250px] transition-colors duration-300 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <div className="flex flex-wrap justify-between items-center gap-2 mb-3 shrink-0">
-                <h2 className={`text-sm sm:text-base font-bold ${isDark ? 'text-blue-400' : 'text-slate-800'}`}>輸出結果</h2>
-                <div className="flex rounded border overflow-hidden transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700">
-                    <button onClick={()=>setOutputFormat('gpx')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='gpx' ? (isDark ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>GPX</button>
-                    <button onClick={()=>setOutputFormat('csv')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='csv' ? (isDark ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>座標</button>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3 mb-3 shrink-0">
-                <div className="p-2 rounded border text-center transition-colors duration-300 bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700"><span className="block text-xs text-slate-500 mb-1">總里程</span><span className={`font-bold text-base ${isDark ? 'text-blue-400' : 'text-slate-800'}`}>{stats.dist} km</span></div>
-                <div className="p-2 rounded border text-center transition-colors duration-300 bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700"><span className="block text-xs text-slate-500 mb-1">總時間</span><span className={`font-bold text-base ${isDark ? 'text-blue-400' : 'text-slate-800'}`}>{stats.time} min</span></div>
-              </div>
-              <div className="relative flex-1 rounded border min-h-[80px] transition-colors duration-300 bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 shadow-inner">
-                <textarea className={`w-full h-full bg-transparent text-xs p-3 outline-none custom-scrollbar font-mono ${isDark ? 'text-blue-200' : 'text-slate-700'}`} readOnly value={outputFormat==='gpx'?gpxOut:csvOut} placeholder="等待生成..."></textarea>
-                {currentOut && <div className="absolute bottom-2 right-2 flex gap-1.5"><button onClick={copyToClipboard} className={`p-1.5 rounded active:scale-95 transition ${isDark ? 'bg-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50'}`}><i className={`fas ${copied?`fa-check ${isDark ? 'text-blue-400' : 'text-slate-800'}`:`fa-copy`} text-sm`}></i></button><button onClick={dlGPX} className={`text-white px-3 py-1.5 rounded text-sm font-bold active:scale-95 transition shadow-sm ${isDark ? 'bg-blue-600 hover:bg-blue-500' : 'bg-slate-800 hover:bg-slate-700'}`}><i className="fas fa-download"></i></button></div>}
-              </div>
-            </div>
-          </div>
-          
-          <div className="order-1 lg:order-2 lg:col-span-8 rounded-xl border relative overflow-hidden min-h-[50vh] lg:h-full flex flex-col pb-4 transition-colors duration-300 bg-white dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-2xl z-10">
-             <div className="absolute top-3 left-3 z-20 flex gap-2 w-full pr-6 pointer-events-none">
-               <span className={`px-3 py-2 rounded-lg text-xs border shadow-sm dark:shadow-md backdrop-blur pointer-events-auto flex items-center gap-1.5 font-bold transition-colors duration-300 bg-white/90 dark:bg-slate-900/90 border-slate-200 dark:border-slate-700 ${isDark ? 'text-blue-400' : 'text-slate-800'}`}><i className="fas fa-hand-pointer mr-1 text-blue-500"></i> 點擊地圖設定起點</span>
-               <button onClick={centerPath} className="border px-3 py-2 rounded-lg text-xs pointer-events-auto ml-auto transition active:scale-95 flex items-center gap-1.5 shadow-sm font-semibold duration-300 bg-slate-100 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-white"><i className="fas fa-crosshairs"></i>置中軌跡</button>
-             </div>
-             
-             <div id="leaflet-map-m2" className="absolute inset-0 z-0"></div>
-          </div>
-        </div>
-      );
-    }
-
-    // --- 【子元件：模式三 地圖圈地真實 S2 掃蕩】 ---
-    function Mode3({ isDark }) {
-      const mapRef = useRef(null);
-      const tileLayerRef = useRef(null);
-      const drawnLayerRef = useRef(null);
-      const resultLayerGroupRef = useRef(null);
-
-      const [s2Level, setS2Level] = useStickyState('17', 'pikmin_v38.5_m3_level');
-      const [simplifyPath, setSimplifyPath] = useStickyState(false, 'pikmin_v38.5_m3_simplify');
-      const [pathMode, setPathMode] = useStickyState('vertical-ew', 'pikmin_v38.5_m3_pathmode');
-      const [searchQuery, setSearchQuery] = useState('');
-      const [drawnCoords, setDrawnCoords] = useState([]);
-      const [pathData, setPathData] = useState([]);
-      const [gpxOut, setGpxOut] = useState('');
-      const [csvOut, setCsvOut] = useState('');
-      const [outputFormat, setOutputFormat] = useState('gpx');
-      const [loading, setLoading] = useState(false);
-      const [copied, setCopied] = useState(false);
-      const [badgeText, setBadgeText] = useState('請在地圖上繪製範圍');
-
-      useEffect(() => {
-        if (!mapRef.current) {
-          const map = L.map('leaflet-map', { preferCanvas: true }).setView([25.033, 121.565], 15); 
-          mapRef.current = map;
-          tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
-
-          map.pm.addControls({ position: 'topleft', drawCircle: false, drawCircleMarker: false, drawPolyline: false, drawText: false, cutPolygon: false, editMode: true, dragMode: true, removalMode: true, drawMarker: false });
-          map.pm.setLang('zh_tw');
-          resultLayerGroupRef.current = L.layerGroup().addTo(map);
-
-          map.on('pm:create', (e) => {
-            if (drawnLayerRef.current) map.removeLayer(drawnLayerRef.current);
-            drawnLayerRef.current = e.layer;
-            setDrawnCoords(e.layer.getLatLngs()[0].map(p => [p.lat, p.lng]));
-            e.layer.on('pm:edit', () => { setDrawnCoords(e.layer.getLatLngs()[0].map(p => [p.lat, p.lng])); });
-          });
-
-          map.on('pm:remove', (e) => {
-            if (e.layer === drawnLayerRef.current) {
-              drawnLayerRef.current = null; setDrawnCoords([]); setPathData([]); setGpxOut(''); setCsvOut('');
-              setBadgeText('請在地圖上繪製範圍'); resultLayerGroupRef.current.clearLayers();
-            }
-          });
-        }
-        return () => { if (mapRef.current) { mapRef.current.off(); mapRef.current.remove(); mapRef.current = null; } };
-      }, []);
-
-      // Scanline 用：計算某一水平掃描線（固定 lat）跟多邊形所有邊的交點 lng 座標，由小到大排序後回傳。
-      // 交點採跟原本 pointInPolygon 完全相同的 even-odd 判斷條件與內插公式，只是從「逐點檢查」
-      // 改成「逐行算交點」，避免對每個網格點都做一次 O(頂點數) 的射線檢測。
-      const getRowIntersections = (rowLat, vs) => {
-        let xs = [];
-        for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
-          const yi = vs[i][0], yj = vs[j][0]; const xi = vs[i][1], xj = vs[j][1];
-          if ((yi > rowLat) !== (yj > rowLat)) {
-            xs.push(xi + (rowLat - yi) * (xj - xi) / (yj - yi));
-          }
-        }
-        xs.sort((a, b) => a - b);
-        return xs;
-      };
-
-      // 簡化路徑：只保留「轉彎點」。用前後兩段方向的夾角判斷，共線（含同方向延伸）就移除中間點，
-      // 夾角夠大（真的轉彎）或接近 180 度（原地回頭）都保留，避免誤刪掉真正需要的轉折點。
-      const simplifyToTurns = (path) => {
-        if (path.length <= 2) return path;
-        const angleTol = 0.5; // 度，方向夾角小於這個值視為同一直線
-        const result = [path[0]];
-        for (let i = 1; i < path.length - 1; i++) {
-          const A = result[result.length - 1], B = path[i], C = path[i + 1];
-          const dLat1 = B.lat - A.lat, dLng1 = B.lng - A.lng;
-          const dLat2 = C.lat - B.lat, dLng2 = C.lng - B.lng;
-          const len1 = Math.hypot(dLat1, dLng1), len2 = Math.hypot(dLat2, dLng2);
-          if (len1 === 0) continue; // 跟前一個保留點重複，跳過
-          if (len2 === 0) { result.push(B); continue; } // 下一點是重複點，保守保留
-          const cross = (dLat1 * dLng2 - dLng1 * dLat2) / (len1 * len2);
-          const dot = (dLat1 * dLat2 + dLng1 * dLng2) / (len1 * len2);
-          const angleDeg = Math.abs(Math.atan2(cross, dot)) * 180 / Math.PI;
-          if (angleDeg > angleTol) result.push(B);
-        }
-        result.push(path[path.length - 1]);
-        return result;
-      };
-
-      useEffect(() => {
-        if (drawnCoords.length < 3) return;
-        setLoading(true); setBadgeText('正在運算 S2 網格...');
-        setTimeout(() => {
-          try {
-            let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
-            drawnCoords.forEach(p => { if(p[0] < minLat) minLat = p[0]; if(p[0] > maxLat) maxLat = p[0]; if(p[1] < minLng) minLng = p[1]; if(p[1] > maxLng) maxLng = p[1]; });
-
-            const level = parseInt(s2Level, 10);
-            // 注意：這裡是「掃描取樣間距」，比該等級 S2 網格的真實邊長小很多（約 1/6~1/7），
-            // 用意是確保 scanline 掃描不會因為球面網格跟經緯度不對齊而漏踩邊界格。
-            // 真實網格邊長（依 S2 官方 AverageArea 換算）：L16≈141m、L17≈70m、L18≈35m，
-            // 選單上顯示的網格大小標籤用的是這組真實數值，跟這裡的 scanStep 是兩回事。
-            const stepMap = { 16: 0.00020, 17: 0.00009, 18: 0.00005 };
-            const scanStep = stepMap[level] || 0.00009;
-
-            let discoveredCells = new Set();
-            for(let lat = minLat; lat <= maxLat; lat += scanStep) {
-              const xs = getRowIntersections(lat, drawnCoords);
-              // even-odd 配對：交點兩兩一組，中間就是這一行落在多邊形內的 lng 區間
-              for (let k = 0; k + 1 < xs.length; k += 2) {
-                const spanStart = xs[k], spanEnd = xs[k+1];
-                // 對齊到跟 minLng 同一個網格起點，維持跟原本一樣的取樣位置
-                let lng = minLng + Math.ceil((Math.max(spanStart, minLng) - minLng) / scanStep) * scanStep;
-                for (; lng <= spanEnd; lng += scanStep) {
-                  discoveredCells.add(window.S2.latLngToKey(lat, lng, level));
-                }
-              }
-            }
-
-            let unsortedPoints = Array.from(discoveredCells).map(key => { let latlng = window.S2.keyToLatLng(key); return { lat: latlng.lat, lng: latlng.lng }; });
-
-            let finalPath = [];
-            if (unsortedPoints.length > 0) {
-                let isVertical = pathMode.startsWith('vertical');
-                let primaryDesc = pathMode.endsWith('ew') || pathMode.endsWith('sn'); 
-                const tolerance = scanStep * 1.5; 
-                let getPrimary = p => isVertical ? p.lng : p.lat; let getSecondary = p => isVertical ? p.lat : p.lng;
-
-                unsortedPoints.sort((a, b) => primaryDesc ? getPrimary(b) - getPrimary(a) : getPrimary(a) - getPrimary(b));
-
-                let groups = []; let currentGroup = []; let lastPrimary = null;
-                for (let p of unsortedPoints) {
-                  let primaryVal = getPrimary(p);
-                  if (lastPrimary === null || Math.abs(primaryVal - lastPrimary) < tolerance) { currentGroup.push(p); } 
-                  else { groups.push(currentGroup); currentGroup = [p]; }
-                  let sum = 0; for(let gp of currentGroup) sum += getPrimary(gp);
-                  lastPrimary = sum / currentGroup.length;
-                }
-                if (currentGroup.length > 0) groups.push(currentGroup);
-
-                let reverseSecondary = false; let defaultSecondaryDesc = isVertical ? true : false; 
-                groups.forEach(group => {
-                  let desc = reverseSecondary ? !defaultSecondaryDesc : defaultSecondaryDesc;
-                  group.sort((a, b) => desc ? getSecondary(b) - getSecondary(a) : getSecondary(a) - getSecondary(b));
-                  finalPath.push(...group); reverseSecondary = !reverseSecondary;
-                });
-            }
-
-            setPathData(finalPath);
-            if (finalPath.length === 0) { setBadgeText('範圍過小，未能涵蓋網格'); setGpxOut(''); setCsvOut(''); if (resultLayerGroupRef.current) resultLayerGroupRef.current.clearLayers(); setLoading(false); return; }
-
-            const outputPath = simplifyPath ? simplifyToTurns(finalPath) : finalPath;
-
-            const normPath = outputPath.map(p => ({ lat: p.lat, lon: p.lng }));
-            const gpxStr = pointsToGPX(normPath, 'S2_Map_Sweep', 'V38.5_Mode3');
-            const csvStr = pointsToCSV(normPath);
-            setGpxOut(gpxStr); setCsvOut(csvStr);
-            setBadgeText(simplifyPath
-              ? `總計涵蓋 ${finalPath.length} 個 S2 網格，簡化為 ${outputPath.length} 個轉彎座標`
-              : `總計涵蓋 ${finalPath.length} 個 S2 網格`);
-
-            const group = resultLayerGroupRef.current; group.clearLayers();
-            outputPath.forEach((p, idx) => {
-              let marker = L.circleMarker([p.lat, p.lng], { radius: 4, color: isDark ? '#2dd4bf' : '#0d9488', fillColor: isDark ? '#14b8a6' : '#14b8a6', fillOpacity: 1, weight: 1, pmIgnore: true }).bindPopup(`${simplifyPath ? '轉彎點' : '網格順序'}: ${idx+1}`);
-              group.addLayer(marker);
-            });
-            let polyline = L.polyline(outputPath.map(p => [p.lat, p.lng]), { color: isDark ? '#2dd4bf' : '#14b8a6', weight: 3, dashArray: '8, 8', opacity: 0.8, pmIgnore: true });
-            group.addLayer(polyline);
-
-            // 起訖點顏色跟 Mode2 統一（綠=起點／紅=終點），疊在最上層，才能一眼看出路線走向
-            L.circleMarker([outputPath[0].lat, outputPath[0].lng], {
-              radius: 6, color: '#16a34a', fillColor: '#16a34a', fillOpacity: 1, pmIgnore: true
-            }).bindPopup('起點').addTo(group);
-            if (outputPath.length > 1) {
-              const lastP = outputPath[outputPath.length - 1];
-              L.circleMarker([lastP.lat, lastP.lng], {
-                radius: 6, color: '#dc2626', fillColor: '#dc2626', fillOpacity: 1, pmIgnore: true
-              }).bindPopup('終點').addTo(group);
-            }
-
-          } catch(err) { console.error(err); setBadgeText('運算發生錯誤'); } finally { setLoading(false); }
-        }, 50);
-      }, [drawnCoords, s2Level, pathMode, isDark, simplifyPath]);
-
-      const searchLocation = async () => {
-        if (!searchQuery) return; setLoading(true);
-        try {
-          const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}`);
-          const data = await response.json();
-          if (data && data.length > 0) {
-            const lat = parseFloat(data[0].lat); const lon = parseFloat(data[0].lon);
-            if (mapRef.current) mapRef.current.flyTo([lat, lon], 16, { duration: 1.5 });
-          } else { alert('找不到該地點，請嘗試其他關鍵字'); }
-        } catch (e) { console.error('Search error:', e); } finally { setLoading(false); }
-      };
-
-      const locateMe = () => {
-        if (!navigator.geolocation) return alert('您的瀏覽器不支援定位功能'); setLoading(true);
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            const lat = position.coords.latitude; const lng = position.coords.longitude;
-            if (mapRef.current) mapRef.current.flyTo([lat, lng], 16, { duration: 1.5 }); setLoading(false);
-          },
-          (error) => { alert('無法取得位置，請確認瀏覽器定位權限'); setLoading(false); }, { enableHighAccuracy: true, timeout: 5000 }
-        );
-      };
-
-      const currentOut = outputFormat === 'gpx' ? gpxOut : csvOut;
-      const copyToClipboard = () => { 
-        if(!currentOut) return;
-        if (navigator.clipboard && window.isSecureContext) {
-          navigator.clipboard.writeText(currentOut)
-            .then(() => { setCopied(true); setTimeout(()=>setCopied(false), 2000); })
-            .catch((err) => { console.error("複製失敗", err); legacyCopyFallback(currentOut, setCopied); });
-        } else {
-          legacyCopyFallback(currentOut, setCopied);
-        }
-      };
-      const dlGPX = () => { 
-        if(!currentOut) return; const ext = outputFormat === 'gpx' ? 'gpx' : 'txt'; const mime = outputFormat === 'gpx' ? 'text/xml' : 'text/plain';
-        downloadFile(currentOut, `M3_S2_L${s2Level}_${getTimestamp()}.${ext}`, mime);
-      };
-
-      return (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-0 pb-4 relative transition-colors duration-300">
-          {loading && (
-            <div className={`absolute inset-0 z-[1000] rounded-xl flex items-center justify-center backdrop-blur-sm transition-colors duration-300 ${isDark ? 'bg-slate-900/40' : 'bg-slate-200/60'}`}>
-              <i className={`fas fa-spinner fa-spin text-3xl ${isDark ? 'text-teal-400' : 'text-slate-800'}`}></i>
-              <span className={`ml-3 font-bold tracking-widest text-sm ${isDark ? 'text-teal-400' : 'text-slate-800'}`}>地圖定位與運算中...</span>
-            </div>
-          )}
-          <div className="lg:col-span-4 flex flex-col gap-4 h-auto lg:h-full lg:min-h-[600px] z-20">
-            <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <h2 className={`text-sm sm:text-base font-bold mb-3 ${isDark ? 'text-teal-400' : 'text-slate-800'}`}><i className="fas fa-draw-polygon mr-2"></i>地圖圈地控制</h2>
-              
-              <div className="flex gap-2 mb-4">
-                <input type="text" className={`flex-grow border rounded-lg p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 focus:border-slate-500 text-white' : 'bg-slate-50 border-slate-300 focus:border-slate-400 text-slate-800 focus:bg-white'}`} value={searchQuery} onChange={(e)=>setSearchQuery(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && searchLocation()} placeholder="搜尋地點 (如: 大安森林公園)" />
-                <button onClick={searchLocation} className={`px-4 rounded-lg border transition-colors duration-300 shadow-sm text-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-white' : 'bg-white hover:bg-slate-50 border-slate-300 text-slate-700'}`} title="搜尋"><i className="fas fa-search"></i></button>
-                <button onClick={locateMe} className={`px-4 rounded-lg border transition-colors duration-300 shadow-sm text-sm ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-teal-400' : 'bg-white hover:bg-slate-50 border-slate-300 text-teal-600'}`} title="定位我的位置"><i className="fas fa-location-arrow"></i></button>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="text-xs font-semibold block mb-1.5 text-slate-500 dark:text-slate-400">S2 網格精確度層級</label>
-                  <select className={`w-full border rounded-lg p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={s2Level} onChange={(e)=>setS2Level(e.target.value)}>
-                    <option value="16">Level 16（約141m×141m）</option>
-                    <option value="17">Level 17（約70m×70m｜補給站/大花/預設）</option>
-                    <option value="18">Level 18（約35m×35m）</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold block mb-1.5 text-slate-500 dark:text-slate-400">路線演算模式</label>
-                  <select className={`w-full border rounded-lg p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={pathMode} onChange={(e)=>setPathMode(e.target.value)}>
-                    <option value="vertical-ew">縱向 S 型 (東至西 / 右至左)</option>
-                    <option value="vertical-we">縱向 S 型 (西至東 / 左至右)</option>
-                  </select>
-                </div>
-                <label className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 hover:border-slate-500' : 'bg-slate-50 border-slate-300 hover:border-slate-400'}`}>
-                  <input type="checkbox" className="w-4 h-4 accent-teal-500" checked={simplifyPath} onChange={(e)=>setSimplifyPath(e.target.checked)} />
-                  <span className="text-sm">只保留轉彎座標（精簡地圖標記與匯出檔案，直線段中間點不重複輸出）</span>
-                </label>
-              </div>
-            </div>
-            
-            <div className="flex-1 p-4 rounded-xl border flex flex-col min-h-[250px] transition-colors duration-300 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-xl">
-              <div className="flex flex-wrap justify-between items-center gap-2 mb-3 shrink-0">
-                <h2 className={`text-sm sm:text-base font-bold ${isDark ? 'text-teal-400' : 'text-slate-800'}`}>圈地結果與輸出</h2>
-                <div className="flex rounded border overflow-hidden transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700">
-                    <button onClick={()=>setOutputFormat('gpx')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='gpx' ? (isDark ? 'bg-teal-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>GPX</button>
-                    <button onClick={()=>setOutputFormat('csv')} className={`px-3 py-1.5 text-xs transition-colors ${outputFormat==='csv' ? (isDark ? 'bg-teal-600 text-white shadow-sm' : 'bg-white text-slate-800 shadow-sm') : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>座標</button>
-                </div>
-              </div>
-              <div className="mb-3 shrink-0">
-                <span className={`block w-full p-2.5 rounded-lg border text-center text-sm font-bold transition-colors duration-300 ${pathData.length > 0 ? (isDark ? 'bg-teal-900/50 border-teal-700 text-teal-300' : 'bg-teal-50 border-teal-200 text-teal-700') : (isDark ? 'bg-slate-900 border-slate-700 text-slate-500' : 'bg-slate-100 border-slate-200 text-slate-500')}`}>
-                  {badgeText}
-                </span>
-              </div>
-              <div className="relative flex-1 rounded-lg border min-h-[80px] transition-colors duration-300 bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 shadow-inner">
-                <textarea className={`w-full h-full bg-transparent text-xs p-3 outline-none custom-scrollbar font-mono ${isDark ? 'text-teal-200' : 'text-slate-700'}`} readOnly value={currentOut} placeholder="請使用右側地圖的左上方多邊形工具，畫出您想涵蓋的範圍..."></textarea>
-                {currentOut && <div className="absolute bottom-2 right-2 flex gap-1.5"><button onClick={copyToClipboard} className={`p-2 rounded active:scale-95 transition ${isDark ? 'bg-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50'}`}><i className={`fas ${copied?`fa-check ${isDark ? 'text-teal-400' : 'text-slate-800'}`:`fa-copy`} text-sm`}></i></button><button onClick={dlGPX} className={`text-white px-4 py-2 rounded text-sm font-bold active:scale-95 transition shadow-sm ${isDark ? 'bg-teal-600 hover:bg-teal-500' : 'bg-slate-800 hover:bg-slate-700'}`}><i className="fas fa-download mr-1"></i> 下載</button></div>}
-              </div>
-            </div>
-          </div>
-          
-          <div className="lg:col-span-8 rounded-xl border relative overflow-hidden min-h-[50vh] lg:h-full flex flex-col transition-colors duration-300 bg-white dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-2xl z-10">
-            <div id="leaflet-map" className="absolute inset-0 z-0"></div>
-          </div>
-        </div>
-      );
-    }
-
-    function App() {
-      const [appMode, setAppMode] = useStickyState('mode1', 'pikmin_v38.5_appmode');
-      const [isDark, setIsDark] = useStickyState(true, 'pikmin_v38.5_theme_is_dark');
-
-      useEffect(() => {
-        if (isDark) {
-          document.documentElement.classList.add('dark');
-          document.body.className = "bg-[#0f172a] text-slate-200 bg-grid transition-colors duration-300";
-        } else {
-          document.documentElement.classList.remove('dark');
-          document.body.className = "bg-[#f1f5f9] text-slate-700 bg-dots transition-colors duration-300";
-        }
-      }, [isDark]);
-
-      return (
-        <div className="min-h-screen flex flex-col p-2 sm:p-4">
-          <div className="max-w-[1600px] w-full mx-auto flex-1 flex flex-col min-h-0">
-            <div className="flex flex-col sm:flex-row justify-between items-center mb-4 p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-lg">
-              <div className="flex items-center gap-4 px-2">
-                <i className={`fab fa-neos text-3xl ${isDark ? 'text-emerald-400' : 'text-slate-800'}`}></i>
-                <div>
-                  <h1 className={`text-xl font-black tracking-wider uppercase ${isDark ? 'text-white' : 'text-slate-800'}`}>PIKMIN NAVIGATOR</h1>
-                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-slate-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V38.5<span className="border px-1.5 py-0.5 rounded-sm text-xs font-bold shadow-sm transition-colors duration-300 bg-slate-100 dark:bg-blue-600 text-slate-700 dark:text-white border-slate-200 dark:border-transparent">寫字測試中</span></p>
-                </div>
-              </div>
-              <div className="flex rounded-lg p-1.5 border w-full sm:w-auto mt-3 sm:mt-0 transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 overflow-x-auto custom-scrollbar">
-                <button onClick={()=>setAppMode('mode1')} className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-md text-sm font-bold transition-colors whitespace-nowrap ${appMode==='mode1' ? (isDark ? 'bg-emerald-500 text-slate-900' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-emerald-400' : 'text-slate-500 hover:text-slate-700')}`}><i className="fas fa-crosshairs mr-1.5"></i> 精準控花</button>
-                <button onClick={()=>setAppMode('mode2')} className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-md text-sm font-bold transition-colors whitespace-nowrap ${appMode==='mode2' ? (isDark ? 'bg-blue-500 text-slate-900' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-blue-400' : 'text-slate-500 hover:text-slate-700')}`}><i className="fas fa-border-all mr-1.5"></i> 盲掃佈線</button>
-                <button onClick={()=>setAppMode('mode3')} className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-md text-sm font-bold transition-colors whitespace-nowrap ${appMode==='mode3' ? (isDark ? 'bg-teal-500 text-slate-900' : 'bg-white text-slate-800 shadow-sm') : (isDark ? 'text-slate-400 hover:text-teal-400' : 'text-slate-500 hover:text-slate-700')}`}><i className="fas fa-draw-polygon mr-1.5"></i> 地圖圈地</button>
-                
-                <div className="w-px mx-2 transition-colors duration-300 bg-slate-200 dark:bg-slate-700 shrink-0"></div>
-                
-                <button onClick={()=>setIsDark(!isDark)} className="w-10 sm:w-12 flex justify-center items-center py-2 rounded-md text-base font-bold transition-colors text-slate-500 dark:text-slate-400 hover:text-amber-500 dark:hover:text-amber-300 shrink-0" title={isDark ? "切換至明亮模式" : "切換至深色模式"}>
-                  <i className={`fas fa-fw ${isDark ? 'fa-sun' : 'fa-moon'}`}></i>
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 min-h-0 flex flex-col">
-              {appMode==='mode1' && <Mode1 isDark={isDark} />}
-              {appMode==='mode2' && <Mode2 isDark={isDark} />}
-              {appMode==='mode3' && <Mode3 isDark={isDark} />}
-            </div>
-          </div>
-        </div>
-      );
-    }
-    class ErrorBoundary extends React.Component {
-      constructor(props) { super(props); this.state = { error: null }; }
-      static getDerivedStateFromError(error) { return { error }; }
-      componentDidCatch(error, info) { console.error('App 發生未捕捉的錯誤：', error, info); }
-      render() {
-        if (this.state.error) {
-          return (
-            <div style={{ padding: '2rem', fontFamily: 'monospace', color: '#f87171', background: '#0f172a', minHeight: '100vh' }}>
-              <h1 style={{ fontSize: '1.25rem', fontWeight: 'bold', marginBottom: '1rem' }}>⚠️ 應用程式發生錯誤</h1>
-              <p style={{ marginBottom: '0.5rem' }}>{String(this.state.error && this.state.error.message || this.state.error)}</p>
-              <p style={{ color: '#94a3b8', fontSize: '0.875rem' }}>請開啟瀏覽器 DevTools Console 查看完整錯誤堆疊，或重新整理頁面再試一次。</p>
-            </div>
-          );
-        }
-        return this.props.children;
-      }
-    }
-    const root = ReactDOM.createRoot(document.getElementById('root')); root.render(<ErrorBoundary><App /></ErrorBoundary>);
-  </script>
-</body>
-</html>
+     
