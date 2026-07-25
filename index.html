@@ -1947,6 +1947,8 @@
       const resultLayerGroupRef = useRef(null);
 
       const [s2Level, setS2Level] = useStickyState('17', 'pikmin_v38.5_m3_level');
+      const [gridSource, setGridSource] = useStickyState('S2', 'pikmin_v38.5_m3_gridsource');
+      const [customSpacingM, setCustomSpacingM] = useStickyState(30, 'pikmin_v38.5_m3_customspacing');
       const [simplifyPath, setSimplifyPath] = useStickyState(false, 'pikmin_v38.5_m3_simplify');
       const [toast, showToast] = useToast();
       const [pathMode, setPathMode] = useStickyState('vertical-ew', 'pikmin_v38.5_m3_pathmode');
@@ -2002,6 +2004,20 @@
         return xs;
       };
 
+      // 鏡像版本：計算某一垂直掃描線（固定 lng）跟多邊形所有邊的交點 lat 座標，由小到大排序後回傳。
+      // 邏輯跟 getRowIntersections 完全一樣，只是把 lat/lng 的角色互換，供自訂間距的縱向掃描使用。
+      const getColumnIntersections = (colLng, vs) => {
+        let ys = [];
+        for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+          const xi = vs[i][1], xj = vs[j][1]; const yi = vs[i][0], yj = vs[j][0];
+          if ((xi > colLng) !== (xj > colLng)) {
+            ys.push(yi + (colLng - xi) * (yj - yi) / (xj - xi));
+          }
+        }
+        ys.sort((a, b) => a - b);
+        return ys;
+      };
+
       // 簡化路徑：只保留「轉彎點」。用前後兩段方向的夾角判斷，共線（含同方向延伸）就移除中間點，
       // 夾角夠大（真的轉彎）或接近 180 度（原地回頭）都保留，避免誤刪掉真正需要的轉折點。
       const simplifyToTurns = (path) => {
@@ -2026,117 +2042,188 @@
 
       useEffect(() => {
         if (drawnCoords.length < 3) return;
-        setLoading(true); setBadgeText('正在運算 S2 網格...');
+        setLoading(true); setBadgeText(gridSource === 'S2' ? '正在運算 S2 網格...' : '正在計算自訂間距格點...');
         setTimeout(() => {
           try {
             let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
             drawnCoords.forEach(p => { if(p[0] < minLat) minLat = p[0]; if(p[0] > maxLat) maxLat = p[0]; if(p[1] < minLng) minLng = p[1]; if(p[1] > maxLng) maxLng = p[1]; });
 
-            const level = parseInt(s2Level, 10);
-            // 注意：這裡是「掃描取樣間距」，比該等級 S2 網格的真實邊長小很多（約 1/6~1/7），
-            // 用意是確保 scanline 掃描不會因為球面網格跟經緯度不對齊而漏踩邊界格。
-            // 真實網格邊長（依 S2 官方 AverageArea 換算）：L16≈141m、L17≈70m、L18≈35m，
-            // 選單上顯示的網格大小標籤用的是這組真實數值，跟這裡的 scanStep 是兩回事。
-            const stepMap = { 16: 0.00020, 17: 0.00009, 18: 0.00005 };
-            const scanStep = stepMap[level] || 0.00009;
-
-            let discoveredCells = new Set();
-            for(let lat = minLat; lat <= maxLat; lat += scanStep) {
-              const xs = getRowIntersections(lat, drawnCoords);
-              // even-odd 配對：交點兩兩一組，中間就是這一行落在多邊形內的 lng 區間
-              for (let k = 0; k + 1 < xs.length; k += 2) {
-                const spanStart = xs[k], spanEnd = xs[k+1];
-                // 對齊到跟 minLng 同一個網格起點，維持跟原本一樣的取樣位置
-                let lng = minLng + Math.ceil((Math.max(spanStart, minLng) - minLng) / scanStep) * scanStep;
-                for (; lng <= spanEnd; lng += scanStep) {
-                  discoveredCells.add(window.S2.latLngToKey(lat, lng, level));
-                }
-              }
-            }
+            // 路徑排序方向：isVertical 決定是縱向（沿上下）還是橫向（沿左右）；
+            // primaryDesc 決定排跟排/列跟列之間的前進方向（true=由大到小）。S2 網格跟自訂間距共用同一套方向邏輯。
+            const PATH_MODE_MAP = {
+              'vertical-we':   { isVertical: true,  primaryDesc: false }, // 縱向 S 型：西至東
+              'vertical-ew':   { isVertical: true,  primaryDesc: true  }, // 縱向 S 型：東至西
+              'horizontal-ns': { isVertical: false, primaryDesc: true  }, // 橫向 S 型：北至南
+              'horizontal-sn': { isVertical: false, primaryDesc: false }, // 橫向 S 型：南至北
+            };
+            const modeCfg = PATH_MODE_MAP[pathMode] || PATH_MODE_MAP['vertical-ew'];
+            let isVertical = modeCfg.isVertical;
+            let primaryDesc = modeCfg.primaryDesc;
 
             let finalPath = [];
-            if (discoveredCells.size > 0) {
-                // 路徑排序方向：isVertical 決定沿「上下鄰居」走出直排，還是沿「左右鄰居」走出橫排；
-                // primaryDesc 決定排跟排/列跟列之間的前進方向（true=由大到小）。
-                const PATH_MODE_MAP = {
-                  'vertical-we':   { isVertical: true,  primaryDesc: false }, // 縱向 S 型：西至東
-                  'vertical-ew':   { isVertical: true,  primaryDesc: true  }, // 縱向 S 型：東至西
-                  'horizontal-ns': { isVertical: false, primaryDesc: true  }, // 橫向 S 型：北至南
-                  'horizontal-sn': { isVertical: false, primaryDesc: false }, // 橫向 S 型：南至北
-                };
-                const modeCfg = PATH_MODE_MAP[pathMode] || PATH_MODE_MAP['vertical-ew'];
-                let isVertical = modeCfg.isVertical;
-                let primaryDesc = modeCfg.primaryDesc;
 
-                // 用 S2 官方鄰居 API 算出每個已發現格子「真正」的左右/上下鄰居（只保留同樣有被發現的），
-                // 取代原本用經緯度距離猜測分群的做法。S2 格網是投影在立方體上再切分，不是單純對齊
-                // 經緯線，用經緯度硬分群在某些方向上會失真；直接問格網本身的鄰居關係才準確，走出來
-                // 的排/列該斜就會斜，是真實格網的樣子。
-                const keyLatLng = new Map();
-                discoveredCells.forEach(key => { keyLatLng.set(key, window.S2.keyToLatLng(key)); });
+            if (gridSource === 'S2') {
+              const level = parseInt(s2Level, 10);
+              // 注意：這裡是「掃描取樣間距」，比該等級 S2 網格的真實邊長小很多（約 1/6~1/7），
+              // 用意是確保 scanline 掃描不會因為球面網格跟經緯度不對齊而漏踩邊界格。
+              // 真實網格邊長（依 S2 官方 AverageArea 換算）：L16≈141m、L17≈70m、L18≈35m，
+              // 選單上顯示的網格大小標籤用的是這組真實數值，跟這裡的 scanStep 是兩回事。
+              const stepMap = { 16: 0.00020, 17: 0.00009, 18: 0.00005 };
+              const scanStep = stepMap[level] || 0.00009;
 
-                const neighborMap = new Map();
-                discoveredCells.forEach(key => {
-                  const c = keyLatLng.get(key);
-                  const [nLeft, nDown, nRight, nUp] = window.S2.latLngToNeighborKeys(c.lat, c.lng, level);
-                  neighborMap.set(key, {
-                    left:  discoveredCells.has(nLeft)  ? nLeft  : null,
-                    right: discoveredCells.has(nRight) ? nRight : null,
-                    down:  discoveredCells.has(nDown)  ? nDown  : null,
-                    up:    discoveredCells.has(nUp)    ? nUp    : null,
+              let discoveredCells = new Set();
+              for(let lat = minLat; lat <= maxLat; lat += scanStep) {
+                const xs = getRowIntersections(lat, drawnCoords);
+                // even-odd 配對：交點兩兩一組，中間就是這一行落在多邊形內的 lng 區間
+                for (let k = 0; k + 1 < xs.length; k += 2) {
+                  const spanStart = xs[k], spanEnd = xs[k+1];
+                  // 對齊到跟 minLng 同一個網格起點，維持跟原本一樣的取樣位置
+                  let lng = minLng + Math.ceil((Math.max(spanStart, minLng) - minLng) / scanStep) * scanStep;
+                  for (; lng <= spanEnd; lng += scanStep) {
+                    discoveredCells.add(window.S2.latLngToKey(lat, lng, level));
+                  }
+                }
+              }
+
+              if (discoveredCells.size > 0) {
+                  // 用 S2 官方鄰居 API 算出每個已發現格子「真正」的左右/上下鄰居（只保留同樣有被發現的），
+                  // 取代原本用經緯度距離猜測分群的做法。S2 格網是投影在立方體上再切分，不是單純對齊
+                  // 經緯線，用經緯度硬分群在某些方向上會失真；直接問格網本身的鄰居關係才準確，走出來
+                  // 的排/列該斜就會斜，是真實格網的樣子。
+                  const keyLatLng = new Map();
+                  discoveredCells.forEach(key => { keyLatLng.set(key, window.S2.keyToLatLng(key)); });
+
+                  const neighborMap = new Map();
+                  discoveredCells.forEach(key => {
+                    const c = keyLatLng.get(key);
+                    const [nLeft, nDown, nRight, nUp] = window.S2.latLngToNeighborKeys(c.lat, c.lng, level);
+                    neighborMap.set(key, {
+                      left:  discoveredCells.has(nLeft)  ? nLeft  : null,
+                      right: discoveredCells.has(nRight) ? nRight : null,
+                      down:  discoveredCells.has(nDown)  ? nDown  : null,
+                      up:    discoveredCells.has(nUp)    ? nUp    : null,
+                    });
                   });
-                });
 
-                // 每個格子在真實 S2 格網裡最多只有一個左鄰居、一個右鄰居（上下同理），沿著這個關係
-                // 走到底，天生就是一條不分岔、不重疊的乾淨排/列，不需要再靠容許誤差去猜分群邊界。
-                const backDir = isVertical ? 'up' : 'left';
-                const fwdDir  = isVertical ? 'down' : 'right';
-                const visited = new Set();
-                const chains = [];
-                discoveredCells.forEach(key => {
-                  if (visited.has(key)) return;
-                  let start = key; let guard = 0;
-                  while (neighborMap.get(start)[backDir] && !visited.has(neighborMap.get(start)[backDir]) && guard++ < 100000) {
-                    start = neighborMap.get(start)[backDir];
+                  // 每個格子在真實 S2 格網裡最多只有一個左鄰居、一個右鄰居（上下同理），沿著這個關係
+                  // 走到底，天生就是一條不分岔、不重疊的乾淨排/列，不需要再靠容許誤差去猜分群邊界。
+                  const backDir = isVertical ? 'up' : 'left';
+                  const fwdDir  = isVertical ? 'down' : 'right';
+                  const visited = new Set();
+                  const chains = [];
+                  discoveredCells.forEach(key => {
+                    if (visited.has(key)) return;
+                    let start = key; let guard = 0;
+                    while (neighborMap.get(start)[backDir] && !visited.has(neighborMap.get(start)[backDir]) && guard++ < 100000) {
+                      start = neighborMap.get(start)[backDir];
+                    }
+                    const chain = [start]; visited.add(start);
+                    let cur = start; guard = 0;
+                    while (neighborMap.get(cur)[fwdDir] && !visited.has(neighborMap.get(cur)[fwdDir]) && guard++ < 100000) {
+                      cur = neighborMap.get(cur)[fwdDir];
+                      chain.push(cur); visited.add(cur);
+                    }
+                    chains.push(chain);
+                  });
+
+                  // 每條排/列內部已經是真實格網順序，只需要決定「排跟排/列跟列之間」先走哪一條——
+                  // 用該鏈的平均緯度（橫向）或平均經度（縱向）排序，維持跟之前一樣的整體前進方向。
+                  const chainPrimary = chain => {
+                    let sum = 0;
+                    chain.forEach(k => { const p = keyLatLng.get(k); sum += isVertical ? p.lng : p.lat; });
+                    return sum / chain.length;
+                  };
+                  chains.sort((a, b) => primaryDesc ? chainPrimary(b) - chainPrimary(a) : chainPrimary(a) - chainPrimary(b));
+
+                  let reverse = false;
+                  chains.forEach(chain => {
+                    const ordered = reverse ? [...chain].reverse() : chain;
+                    ordered.forEach(key => { const p = keyLatLng.get(key); finalPath.push({ lat: p.lat, lng: p.lng }); });
+                    reverse = !reverse;
+                  });
+              }
+            } else {
+              // 自訂間距模式：不套 S2 網格，直接依使用者設定的間距（公尺）在範圍內布規則格點。
+              // 公尺換算成經緯度增量時，經度要再除以 cos(緯度) 校正（同緯度圈上，經度 1 度的實際距離
+              // 會隨緯度變小），緯度則跟緯度無關，固定用地球半徑換算即可。
+              const spacingM = Math.max(25, parseFloat(customSpacingM) || 30);
+              const centerLat = (minLat + maxLat) / 2;
+              const latStepDeg = spacingM / 111320;
+              const lngStepDeg = spacingM / (111320 * Math.cos(centerLat * Math.PI / 180));
+              const primaryStepDeg = isVertical ? lngStepDeg : latStepDeg;   // 排/列之間的間距
+              const secondaryStepDeg = isVertical ? latStepDeg : lngStepDeg; // 排/列內部布點的間距
+              // 找邊界用的細步進（約主軸間距的 1/6），避免細長形狀整段夾在兩個間距格線中間被漏掉；
+              // 找到有落在範圍內的掃描線後，還是強制跟上一條「真正輸出」的排/列保持至少一個間距的距離。
+              const fineStep = primaryStepDeg / 6;
+
+              const intersectFn = isVertical ? getColumnIntersections : getRowIntersections;
+              const primaryMin = isVertical ? minLng : minLat;
+              const primaryMax = isVertical ? maxLng : maxLat;
+
+              // 把一條掃描線的區間轉成點位；每個區間內部除了照間距排點，遠端如果因為間距跳過頭、
+              // 剩下的空隙超過半個間距，就額外在區間終點補一個點，確保這排內部也貼齊邊界。
+              const buildRowPoints = (v, xs) => {
+                let pts = [];
+                for (let k = 0; k + 1 < xs.length; k += 2) {
+                  const spanStart = xs[k], spanEnd = xs[k+1];
+                  let lastSec = null;
+                  for (let sec = spanStart; sec <= spanEnd; sec += secondaryStepDeg) {
+                    pts.push(isVertical ? { lat: sec, lng: v } : { lat: v, lng: sec });
+                    lastSec = sec;
                   }
-                  const chain = [start]; visited.add(start);
-                  let cur = start; guard = 0;
-                  while (neighborMap.get(cur)[fwdDir] && !visited.has(neighborMap.get(cur)[fwdDir]) && guard++ < 100000) {
-                    cur = neighborMap.get(cur)[fwdDir];
-                    chain.push(cur); visited.add(cur);
+                  if (lastSec !== null && (spanEnd - lastSec) > secondaryStepDeg * 0.5) {
+                    pts.push(isVertical ? { lat: spanEnd, lng: v } : { lat: v, lng: spanEnd });
                   }
-                  chains.push(chain);
-                });
+                }
+                return pts;
+              };
 
-                // 每條排/列內部已經是真實格網順序，只需要決定「排跟排/列跟列之間」先走哪一條——
-                // 用該鏈的平均緯度（橫向）或平均經度（縱向）排序，維持跟之前一樣的整體前進方向。
-                const chainPrimary = chain => {
-                  let sum = 0;
-                  chain.forEach(k => { const p = keyLatLng.get(k); sum += isVertical ? p.lng : p.lat; });
-                  return sum / chain.length;
-                };
-                chains.sort((a, b) => primaryDesc ? chainPrimary(b) - chainPrimary(a) : chainPrimary(a) - chainPrimary(b));
+              let rows = [];
+              let lastEmitted = null;
+              let lastInteriorV = null; // 最後一個「有落在多邊形內」的細掃描位置，不管有沒有被選為輸出排
+              for (let v = primaryMin; v <= primaryMax; v += fineStep) {
+                const xs = intersectFn(v, drawnCoords);
+                if (xs.length === 0) continue;
+                lastInteriorV = v;
+                if (lastEmitted === null || (v - lastEmitted) >= primaryStepDeg) {
+                  const pts = buildRowPoints(v, xs);
+                  if (pts.length > 0) { rows.push({ primaryVal: v, points: pts }); lastEmitted = v; }
+                }
+              }
+              // 邊界貼合：排/列之間也是照固定間距跳過去的，最遠端同樣可能跳過頭留下空隙，
+              // 空隙超過半個間距就在邊界附近額外補一排/列。
+              if (lastInteriorV !== null && lastEmitted !== null && (lastInteriorV - lastEmitted) > primaryStepDeg * 0.5) {
+                const xs = intersectFn(lastInteriorV, drawnCoords);
+                const pts = buildRowPoints(lastInteriorV, xs);
+                if (pts.length > 0) rows.push({ primaryVal: lastInteriorV, points: pts });
+              }
 
-                let reverse = false;
-                chains.forEach(chain => {
-                  const ordered = reverse ? [...chain].reverse() : chain;
-                  ordered.forEach(key => { const p = keyLatLng.get(key); finalPath.push({ lat: p.lat, lng: p.lng }); });
-                  reverse = !reverse;
-                });
+              rows.sort((a, b) => primaryDesc ? b.primaryVal - a.primaryVal : a.primaryVal - b.primaryVal);
+
+              // 跟 S2 模式一致的預設起始方向：縱向第一排由北至南、橫向第一排由西至東，排跟排之間交替 S 型。
+              const defaultSecondaryDesc = isVertical;
+              let reverseSecondary = false;
+              rows.forEach(row => {
+                const desc = reverseSecondary ? !defaultSecondaryDesc : defaultSecondaryDesc;
+                const pts = desc ? [...row.points].reverse() : row.points;
+                finalPath.push(...pts);
+                reverseSecondary = !reverseSecondary;
+              });
             }
 
             setPathData(finalPath);
-            if (finalPath.length === 0) { setBadgeText('範圍過小，未能涵蓋網格'); setGpxOut(''); setCsvOut(''); if (resultLayerGroupRef.current) resultLayerGroupRef.current.clearLayers(); setLoading(false); return; }
+            if (finalPath.length === 0) { setBadgeText(gridSource === 'S2' ? '範圍過小，未能涵蓋網格' : '範圍過小，未能布點'); setGpxOut(''); setCsvOut(''); if (resultLayerGroupRef.current) resultLayerGroupRef.current.clearLayers(); setLoading(false); return; }
 
             const outputPath = simplifyPath ? simplifyToTurns(finalPath) : finalPath;
+            const unitLabel = gridSource === 'S2' ? '個 S2 網格' : '個座標點';
 
             const normPath = outputPath.map(p => ({ lat: p.lat, lon: p.lng }));
-            const gpxStr = pointsToGPX(normPath, 'S2_Map_Sweep', 'V38.5_Mode3');
+            const gpxStr = pointsToGPX(normPath, gridSource === 'S2' ? 'S2_Map_Sweep' : 'Custom_Grid_Sweep', 'V38.5_Mode3');
             const csvStr = pointsToCSV(normPath);
             setGpxOut(gpxStr); setCsvOut(csvStr);
             setBadgeText(simplifyPath
-              ? `總計涵蓋 ${finalPath.length} 個 S2 網格，簡化為 ${outputPath.length} 個轉彎座標`
-              : `總計涵蓋 ${finalPath.length} 個 S2 網格`);
+              ? `總計涵蓋 ${finalPath.length} ${unitLabel}，簡化為 ${outputPath.length} 個轉彎座標`
+              : `總計涵蓋 ${finalPath.length} ${unitLabel}`);
 
             const group = resultLayerGroupRef.current; group.clearLayers();
             outputPath.forEach((p, idx) => {
@@ -2159,7 +2246,7 @@
 
           } catch(err) { console.error(err); setBadgeText('運算發生錯誤'); } finally { setLoading(false); }
         }, 50);
-      }, [drawnCoords, s2Level, pathMode, isDark, simplifyPath]);
+      }, [drawnCoords, s2Level, pathMode, isDark, simplifyPath, gridSource, customSpacingM]);
 
       const searchLocation = async () => {
         if (!searchQuery) return; setLoading(true);
@@ -2198,7 +2285,7 @@
       };
       const dlGPX = () => { 
         if(!currentOut) return; const ext = outputFormat === 'gpx' ? 'gpx' : 'txt'; const mime = outputFormat === 'gpx' ? 'text/xml' : 'text/plain';
-        downloadFile(currentOut, `M3_S2_L${s2Level}_${getTimestamp()}.${ext}`, mime);
+        downloadFile(currentOut, `M3_${gridSource === 'S2' ? 'S2_L' + s2Level : 'Grid_' + customSpacingM + 'm'}_${getTimestamp()}.${ext}`, mime);
       };
 
       return (
@@ -2222,13 +2309,27 @@
 
               <div className="space-y-4">
                 <div>
-                  <label className="text-xs font-semibold block mb-1.5 text-slate-500 dark:text-slate-400">S2 網格精確度層級</label>
-                  <select className={`w-full border rounded-lg p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={s2Level} onChange={(e)=>setS2Level(e.target.value)}>
-                    <option value="16">Level 16（約141m×141m）</option>
-                    <option value="17">Level 17（約70m×70m｜補給站/大花/預設）</option>
-                    <option value="18">Level 18（約35m×35m）</option>
-                  </select>
+                  <label className="text-xs font-semibold block mb-1.5 text-slate-500 dark:text-slate-400">格點來源</label>
+                  <div className={`flex rounded-lg border overflow-hidden transition-colors duration-300 ${isDark ? 'border-slate-600' : 'border-slate-300'}`}>
+                    <button onClick={()=>setGridSource('S2')} className={`flex-1 py-2 text-sm font-bold transition-colors ${gridSource==='S2' ? (isDark ? 'bg-teal-600 text-white' : 'bg-teal-500 text-white') : (isDark ? 'bg-slate-900 text-slate-400 hover:text-slate-200' : 'bg-slate-50 text-slate-500 hover:text-slate-700')}`}>S2 網格</button>
+                    <button onClick={()=>setGridSource('CUSTOM')} className={`flex-1 py-2 text-sm font-bold transition-colors ${gridSource==='CUSTOM' ? (isDark ? 'bg-teal-600 text-white' : 'bg-teal-500 text-white') : (isDark ? 'bg-slate-900 text-slate-400 hover:text-slate-200' : 'bg-slate-50 text-slate-500 hover:text-slate-700')}`}>自訂間距</button>
+                  </div>
                 </div>
+                {gridSource === 'S2' ? (
+                  <div>
+                    <label className="text-xs font-semibold block mb-1.5 text-slate-500 dark:text-slate-400">S2 網格精確度層級</label>
+                    <select className={`w-full border rounded-lg p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={s2Level} onChange={(e)=>setS2Level(e.target.value)}>
+                      <option value="16">Level 16（約141m×141m）</option>
+                      <option value="17">Level 17（約70m×70m｜補給站/大花/預設）</option>
+                      <option value="18">Level 18（約35m×35m）</option>
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-xs font-semibold block mb-1.5 text-slate-500 dark:text-slate-400">格點間距(m)<span className="text-slate-400 font-normal"> ・下限25</span></label>
+                    <input type="number" min="25" step="1" className={`w-full border rounded-lg p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={customSpacingM} onChange={(e)=>setCustomSpacingM(e.target.value)} onBlur={(e)=>{let v = parseFloat(e.target.value); if(!isFinite(v) || v < 25) v = 25; setCustomSpacingM(v);}} />
+                  </div>
+                )}
                 <div>
                   <label className="text-xs font-semibold block mb-1.5 text-slate-500 dark:text-slate-400">路線演算模式</label>
                   <select className={`w-full border rounded-lg p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={pathMode} onChange={(e)=>setPathMode(e.target.value)}>
