@@ -865,21 +865,30 @@
                 distMatrix[i][j] = d; distMatrix[j][i] = d;
               }
             }
-            const fastDist = (p1, p2) => distMatrix[ptIndexMap.get(p1.id)][ptIndexMap.get(p2.id)];
+            // 首尾虛擬點（DUMMY_START/DUMMY_END）：到任何真實點的距離皆視為 0。
+            // 讓下面的 2-opt / Or-opt 把虛擬點當成固定不動的頭尾錨點，實際效果等於
+            // 「真實起點/訖點完全自由，交給演算法挑出能讓總路徑最短的兩個點」。
+            const DUMMY_START_ID = '__dummy_start__', DUMMY_END_ID = '__dummy_end__';
+            const fastDist = (p1, p2) => {
+              if (p1.id === DUMMY_START_ID || p1.id === DUMMY_END_ID || p2.id === DUMMY_START_ID || p2.id === DUMMY_END_ID) return 0;
+              return distMatrix[ptIndexMap.get(p1.id)][ptIndexMap.get(p2.id)];
+            };
 
-            let unv = [...points]; let cur = unv.shift(); let opt = [cur];
+            let unv = [...points]; let cur = unv.shift(); let realOpt = [cur];
             while (unv.length > 0) {
               let nIdx = 0; let minD = Infinity;
               for (let i = 0; i < unv.length; i++) {
                 const dist = fastDist(cur, unv[i]);
                 if (dist < minD) { minD = dist; nIdx = i; }
               }
-              cur = unv[nIdx]; opt.push(cur); unv.splice(nIdx, 1);
+              cur = unv[nIdx]; realOpt.push(cur); unv.splice(nIdx, 1);
             }
+            const dummyStart = { id: DUMMY_START_ID };
+            const dummyEnd = { id: DUMMY_END_ID };
+            let opt = [dummyStart, ...realOpt, dummyEnd];
 
-            let improved = true;
-            while (improved) {
-              improved = false;
+            const twoOptPass = () => {
+              let improved = false;
               for (let i = 1; i < opt.length - 2; i++) {
                 for (let j = i + 1; j < opt.length - 1; j++) {
                   const d1 = fastDist(opt[i-1], opt[i]) + fastDist(opt[j], opt[j+1]);
@@ -891,10 +900,63 @@
                   }
                 }
               }
+              return improved;
+            };
+
+            // Or-opt：把長度 1~3 的連續小段從原位置摘出，嘗試插入路徑中其他位置（含反向插入），
+            // 專門修正「單點/小段被落單、靠一條長邊硬接回去」這種 2-opt 修不掉的問題。
+            // 首尾點（index 0 與最後一點）視為起訖點，不參與搬移，只允許插入到它們之間。
+            const orOptPass = () => {
+              let improved = false;
+              const n2 = opt.length;
+              for (let segLen = 1; segLen <= 3; segLen++) {
+                for (let i = 1; i < n2 - segLen; i++) {
+                  const segEnd = i + segLen - 1;
+                  if (segEnd >= n2 - 1) continue;
+                  const prev = opt[i - 1], next = opt[segEnd + 1];
+                  const seg = opt.slice(i, segEnd + 1);
+                  const removeGain = fastDist(prev, seg[0]) + fastDist(seg[seg.length - 1], next) - fastDist(prev, next);
+                  if (removeGain <= 1e-9) continue;
+
+                  let bestDelta = 1e-9, bestJ = -1, bestRev = false;
+                  for (let j = 0; j < n2 - 1; j++) {
+                    if (j >= i - 1 && j <= segEnd) continue; // 插入點落在被搬移的段落內或原位，跳過
+                    const a = opt[j], b = opt[j + 1];
+                    const base = fastDist(a, b);
+                    const costFwd = fastDist(a, seg[0]) + fastDist(seg[seg.length - 1], b) - base;
+                    const deltaFwd = removeGain - costFwd;
+                    if (deltaFwd > bestDelta) { bestDelta = deltaFwd; bestJ = j; bestRev = false; }
+                    if (seg.length > 1) {
+                      const costRev = fastDist(a, seg[seg.length - 1]) + fastDist(seg[0], b) - base;
+                      const deltaRev = removeGain - costRev;
+                      if (deltaRev > bestDelta) { bestDelta = deltaRev; bestJ = j; bestRev = true; }
+                    }
+                  }
+
+                  if (bestJ >= 0) {
+                    const insertSeg = bestRev ? [...seg].reverse() : seg;
+                    opt.splice(i, segLen);
+                    const adjJ = bestJ > segEnd ? bestJ - segLen : bestJ;
+                    opt.splice(adjJ + 1, 0, ...insertSeg);
+                    improved = true;
+                  }
+                }
+              }
+              return improved;
+            };
+
+            let round = 0;
+            let anyImproved = true;
+            while (anyImproved && round < 30) {
+              const a = twoOptPass();
+              const b = orOptPass();
+              anyImproved = a || b;
+              round++;
             }
-            
-            setPoints(calcDirs(opt));
-            setToastMsg('✨ 2-opt 交叉解纏演算法 最佳化完成！');
+
+            const finalOpt = opt.slice(1, opt.length - 1); // 拿掉頭尾虛擬點
+            setPoints(calcDirs(finalOpt));
+            setToastMsg('✨ 2-opt + Or-opt 最佳化完成（起訖點已自動選最優）！');
             setTimeout(() => setToastMsg(''), 3000);
           } catch (e) {
             setToastMsg(`最佳化錯誤：${e.message}`);
