@@ -782,7 +782,7 @@
       const [outputTab, setOutputTab] = useState('planting');
       const [outputFormat, setOutputFormat] = useState('gpx'); 
       const [copied, setCopied] = useState(false);
-      const [stats, setStats] = useState({ distKm: 0, timeMin: 0 });
+      const [stats, setStats] = useState({ distKm: 0, timeMin: 0, pureDistKm: 0 });
       const [toastMsg, setToastMsg] = useState('');
       const [diagnosticMsg, setDiagnosticMsg] = useState(null);
       const [loading, setLoading] = useState(false);
@@ -1105,7 +1105,7 @@
       }, [points, patternType, harvestDist, offsetSide]);
 
       useEffect(() => {
-        if (points.length === 0) { setStats({ distKm: 0, timeMin: 0 }); return; }
+        if (points.length === 0) { setStats({ distKm: 0, timeMin: 0, pureDistKm: 0 }); return; }
         try {
           let totalDist = 0;
           for (let i = 0; i < points.length; i++) {
@@ -1119,8 +1119,14 @@
                const pExit = curPts[curPts.length - 1]; const pEnter = nextPts[0]; 
                totalDist += calcDistanceKm({lat: pExit.l, lon: pExit.n}, {lat: pEnter.l, lon: pEnter.n});
           }
+          // 純花點路徑距離：只算花心座標點對點直線距離，不展開 S/N/O 種花細部路徑，
+          // 用來對照「實際種花繞行距離」跟「花點本身的空間跨度」差多少。
+          let pureDist = 0;
+          for (let i = 0; i < points.length - 1; i++) {
+            pureDist += calcDistanceKm(points[i], points[i + 1]);
+          }
           const tMins = (totalDist / speedKmH) * 60;
-          setStats({ distKm: totalDist.toFixed(2), timeMin: Math.round(tMins) });
+          setStats({ distKm: totalDist.toFixed(2), timeMin: Math.round(tMins), pureDistKm: pureDist.toFixed(2) });
         } catch(e) {
           console.error("Stats Error:", e);
         }
@@ -1275,6 +1281,7 @@
                <div className="flex items-center gap-2"><i className="fas fa-tachometer-alt text-slate-500 dark:text-blue-400 text-base"></i><input type="number" className="w-12 border rounded text-center text-sm p-1 outline-none transition-colors duration-300 bg-slate-50 dark:bg-slate-900 border-slate-300 dark:border-slate-600 text-slate-800 dark:text-white focus:border-slate-400 dark:focus:border-slate-500 focus:bg-white dark:focus:bg-slate-900" value={speedKmH} onChange={(e)=>setSpeedKmH(parseFloat(e.target.value)||1)} /><span className="text-xs text-slate-500">km/h</span></div>
                <div className="flex gap-4">
                  <div className="text-right"><span className="text-xs text-slate-500 dark:text-slate-400 block">路程</span><span className={`font-bold text-sm ${isDark ? theme.text : 'text-slate-800'}`}>{stats.distKm} km</span></div>
+                 <div className="text-right"><span className="text-xs text-slate-500 dark:text-slate-400 block">純花點</span><span className={`font-bold text-sm ${isDark ? theme.text : 'text-slate-800'}`}>{stats.pureDistKm} km</span></div>
                  <div className="text-right"><span className="text-xs text-slate-500 dark:text-slate-400 block">預估</span><span className={`font-bold text-sm ${isDark ? theme.text : 'text-slate-800'}`}>{stats.timeMin} min</span></div>
                </div>
             </div>
