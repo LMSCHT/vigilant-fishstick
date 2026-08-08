@@ -440,11 +440,22 @@
         const lonToM = getLonToMeters(refLat);
         const localFlowers = points.map(p => ({ x: (p.lon - refLon) * lonToM, y: (p.lat - refLat) * CONSTANTS.LAT_TO_M }));
 
-        const SAFE_R = 45; // 絕對禁區 40m + 5m 防卡緩衝
+        const AVOID_THRESHOLD = 45; // 是否啟動避讓模式的門檻：遊戲真實硬限制 40m + 5m 防卡緩衝，固定不隨下面的動態安全距離變動
         const TARGET_R = targetOffset;
         const n = localFlowers.length;
+        // 設計原則：偏移距離 < 45m 時，本來就預期會落在安全距離內，不套用繞路避讓，
+        // 直接用步驟1算出的「理想切線座標」依序連接（最短距離）。
+        // 只有偏移距離 >= 45m 時，才需要嚴格避免路徑連線切入任何花朵的安全距離內，
+        // 這時才需要步驟2~4的候選點篩選 + Dijkstra 繞路。
+        const AVOID_MODE = TARGET_R >= AVOID_THRESHOLD;
+        // 排除半徑改採「動態安全距離」= TARGET_R - 5，取代原本固定 45m：
+        // 用真實資料驗證過，固定 45m 在偏移距離剛好卡在門檻附近（45/46m）時，鄰近花朵的安全圈彼此
+        // 重疊、候選點被大量篩掉，逼演算法大量盲連（實測最多同時10段），盲連距離甚至逼近17m，等於
+        // 穿透遊戲真正的40m硬限制。動態值讓門檻附近的排除半徑跟著縮小（40/41m），問題完全消失；
+        // 偏移距離拉大時排除半徑也跟著等比例拉開（例如60m時變成55m），安全餘裕不再卡死在45m不動。
+        const SAFE_R = AVOID_MODE ? (TARGET_R - 5) : AVOID_THRESHOLD;
 
-        // 步驟 1：取得每一朵花的「理想偏移點」
+        // 步驟 1：取得每一朵花的「理想偏移點」（切線座標）
         let idealPath = [];
         for (let i = 0; i < n; i++) {
             let tangent = { x: 0, y: 0 };
@@ -467,6 +478,17 @@
             idealPath.push({ x: localFlowers[i].x + nx * TARGET_R, y: localFlowers[i].y + ny * TARGET_R, isResolved: false });
         }
 
+        // 偏移距離 < 45m：不避讓，理想切線座標直接依序連接即為最終路徑
+        if (!AVOID_MODE) {
+            const result = idealPath.map(p => ({
+                lat: refLat + p.y / CONSTANTS.LAT_TO_M,
+                lon: refLon + p.x / lonToM,
+                isResolved: false
+            }));
+            result.unsafeFallbackCount = 0;
+            return result;
+        }
+
         // 步驟 2：建立安全候選點網格 (撒豆子)
         const candidates = [];
         const ANGLE_STEP = 30; // 每朵花外圍產生 12 個候選點
@@ -477,7 +499,8 @@
                 let cp = {
                     x: f.x + Math.cos(rad) * TARGET_R,
                     y: f.y + Math.sin(rad) * TARGET_R,
-                    isResolved: true
+                    isResolved: true,
+                    ownerIdx: i // 記錄這個候選點屬於哪一朵花的外圍撒點，供步驟3「傳送」時優先找自己的候選點
                 };
                 // 無情篩選：刪除落在任何禁區內的點
                 let safe = true;
@@ -491,7 +514,11 @@
         }
 
         // 步驟 3：校正理想目標點
-        // 將深陷禁區的無效理想點，"傳送"到最近的安全網格點上
+        // 將深陷禁區的無效理想點，"傳送"到最近的安全網格點上。
+        // 傳送時優先只在「自己」花朵外圍撒的候選點裡找，找不到（候選點被鄰居擠光）才退回全域候選池：
+        // 用真實資料驗證過，若不限制，傳送常會搶到鄰居花朵的候選點，代表點會實際貼在鄰居的採果圈上、
+        // 距離自己反而超出使用者設定的偏移距離（曾測出從該有的60m變成66m，位置整個偏向鄰居），
+        // 這是路徑視覺上「跟預期偏移量對不上、像是穿插/擠壓」的根本原因之一。
         let targetPath = [];
         for (let i = 0; i < n; i++) {
             let ideal = idealPath[i];
@@ -504,8 +531,10 @@
             if (safe) {
                 targetPath.push(ideal);
             } else {
+                const ownCandidates = candidates.filter(c => c.ownerIdx === i);
+                const pool = ownCandidates.length > 0 ? ownCandidates : candidates;
                 let bestC = null; let minDist = Infinity;
-                for (let c of candidates) {
+                for (let c of pool) {
                     let d = Math.hypot(ideal.x - c.x, ideal.y - c.y);
                     if (d < minDist) { minDist = d; bestC = c; }
                 }
@@ -516,7 +545,8 @@
         // 步驟 4：Dijkstra 尋路，主動規劃各點連線
         let finalLocalPath = [];
         let nodesPool = [...candidates]; 
-        
+        let unsafeFallbackCount = 0; // 完全找不到安全繞路、被迫直接盲連（可能穿越花朵禁區）的段數
+
         for (let i = 0; i < n - 1; i++) {
             let pStart = targetPath[i];
             let pEnd = targetPath[i+1];
@@ -549,17 +579,22 @@
                     }
                 } else {
                     finalLocalPath.push(pEnd); // 真實的死胡同 (Fallback盲連)
+                    unsafeFallbackCount++;
                 }
             }
         }
         
         if (n === 1) finalLocalPath = targetPath;
 
-        return finalLocalPath.map(p => ({
+        const result = finalLocalPath.map(p => ({
             lat: refLat + p.y / CONSTANTS.LAT_TO_M,
             lon: refLon + p.x / lonToM,
             isResolved: p.isResolved || false
         }));
+        // 掛在陣列上而非改回傳結構，避免動到既有 .map() 呼叫端；
+        // 呼叫端可用 result.unsafeFallbackCount 判斷是否有段落找不到安全繞路。
+        result.unsafeFallbackCount = unsafeFallbackCount;
+        return result;
     };
     // --- 結束：採果演算法 ---
 
@@ -1095,6 +1130,14 @@
             const puCsv = pointsToCSV(purePts);
 
             setOutputs({ plantingGpx: pGpx, plantingCsv: pCsv, fruitGpx: fGpx, fruitCsv: fCsv, pureGpx: puGpx, pureCsv: puCsv });
+
+            // 採果偏移距離太靠近絕對禁區半徑(45m)時，附近花朵密集處常常擠不出安全繞路空間，
+            // 演算法會靜默改用「直接盲連」（可能穿越花朵禁區），外觀上就是路徑繞遠或穿插交叉。
+            // 這裡把發生次數攤出來提醒使用者，而不是讓使用者拿到一份看起來正常、實際上有問題的路徑。
+            if (offsetPts.unsafeFallbackCount > 0) {
+              setToastMsg(`⚠️ 採果路徑有 ${offsetPts.unsafeFallbackCount} 段找不到安全繞路，已直接盲連（可能穿越花朵禁區）。目前偏移距離 ${harvestDist}m 太接近 45m 絕對禁區，建議調高到 50m 以上再試一次。`);
+              setTimeout(() => setToastMsg(''), 6000);
+            }
           } catch (e) {
             setToastMsg(`生成錯誤：${e.message}`);
             setTimeout(() => setToastMsg(''), 3000);
@@ -1204,7 +1247,8 @@
         return { 
             toSVG, rSafe, r40, r45, rTarget, 
             pPaths: pPaths.map(pth => pth.map(p => toSVG(p.l, p.n))), 
-            fPaths: fPathsRaw.map(p => ({ ...toSVG(p.lat, p.lon), isResolved: p.isResolved })) 
+            fPaths: fPathsRaw.map(p => ({ ...toSVG(p.lat, p.lon), isResolved: p.isResolved })),
+            fruitUnsafeCount: fPathsRaw.unsafeFallbackCount || 0
         };
       }, [points, patternType, harvestDist, offsetSide]);
 
@@ -1336,6 +1380,13 @@
                       <input type="range" min="30" max="70" value={tempHarvestDist} onChange={(e)=>setTempHarvestDist(parseInt(e.target.value))} onMouseUp={()=>setHarvestDist(tempHarvestDist)} onTouchEnd={()=>setHarvestDist(tempHarvestDist)} className={`flex-1 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg cursor-pointer ${theme.bg.replace('bg-', 'accent-')}`} />
                       <span className={`text-xs font-mono font-bold w-9 text-right ${theme.text}`}>[{tempHarvestDist}m]</span>
                   </div>
+
+                  {/* 偏移距離太接近 45m 絕對禁區時即時警示：候選點會大量失效，容易產生繞遠/穿越禁區的無效路徑 */}
+                  {vData && vData.fruitUnsafeCount > 0 && (
+                    <div className="flex items-center gap-1 ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 bg-rose-100 dark:bg-rose-900/50 text-rose-700 dark:text-rose-300" title={`${vData.fruitUnsafeCount} 段找不到安全繞路，已直接盲連（可能穿越花朵禁區）。建議調高偏移距離。`}>
+                      <i className="fas fa-exclamation-triangle"></i> {vData.fruitUnsafeCount}段風險
+                    </div>
+                  )}
 
                   <div className="flex rounded border overflow-hidden shrink-0 ml-3 transition-colors duration-300 bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700">
                       <button onClick={()=>setOffsetSide('L')} className={`px-2.5 py-1 text-xs font-bold transition-colors ${offsetSide==='L' ? theme.bg + ' text-white shadow-sm' : (isDark ? 'text-slate-400 hover:text-blue-400' : 'text-slate-500 hover:text-slate-700')}`}>左側</button>
