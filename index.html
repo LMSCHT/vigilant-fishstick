@@ -1625,9 +1625,10 @@
             if (!isFinite(lineSpacingMeters)) lineSpacingMeters = CONSTANTS.S2_SPACING_KM * 1000;
             if (lineSpacingMeters < 25) lineSpacingMeters = 25;
 
+            // 圈距/第一圈半徑：改由使用者自行決定，不再幫忙夾住 25m 下限。
+            // 只做基本防呆（非數字或 <=0 時退回預設值），避免產生 NaN 或半徑為零/負數的無意義同心圓。
             let circleSpacingMeters = parseFloat(circleSpacingM);
-            if (!isFinite(circleSpacingMeters)) circleSpacingMeters = 35;
-            if (circleSpacingMeters < 25) circleSpacingMeters = 25;
+            if (!isFinite(circleSpacingMeters) || circleSpacingMeters <= 0) circleSpacingMeters = 35;
             
             if (!startCoord) { setLoading(false); return; }
             const match = startCoord.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
@@ -1658,7 +1659,9 @@
                 pts.push({ lat: lat, lon: lon, name: 'Center' }); 
                 const layersCount = parseInt(layers, 10) || 1;
                 for (let l = 0; l < layersCount; l++) {
-                    const rMeters = 20 + l * circleSpacingMeters; 
+                    // 第1圈半徑 = circleSpacingMeters，第2圈 = 2倍，第3圈 = 3倍……
+                    // 不再有寫死的「第一圈固定20m」，第一圈半徑跟後續每圈遞增的距離統一用同一個數字
+                    const rMeters = (l + 1) * circleSpacingMeters; 
                     const segments = 36; 
                     for (let i = 0; i <= segments; i++) {
                         const theta = (i / segments) * 2 * Math.PI;
@@ -2027,7 +2030,7 @@
                     {config.axis === 'CIRCLE' && (
                       <>
                         <div><label className="text-xs text-slate-500 block mb-1.5 font-bold text-purple-500"><i className="fas fa-bullseye mr-1"></i>同心圓外擴層數</label><input type="number" min="1" max="20" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 font-bold ${isDark ? 'bg-slate-900 border-purple-500/50 text-purple-300 focus:border-purple-400' : 'bg-purple-50 border-purple-300 text-purple-700 focus:border-purple-500'}`} value={config.layers || 1} onChange={(e)=>{let v = parseInt(e.target.value)||1; if(v<1)v=1; setConfig({...config, layers: v})}} onBlur={()=>generateGrid(null, false)} /></div>
-                        <div><label className="text-xs text-slate-500 block mb-1.5 font-bold text-purple-500"><i className="fas fa-bullseye mr-1"></i>圈距(m)<span className="text-slate-400 font-normal"> ・下限25</span></label><input type="number" min="25" step="1" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 font-bold ${isDark ? 'bg-slate-900 border-purple-500/50 text-purple-300 focus:border-purple-400' : 'bg-purple-50 border-purple-300 text-purple-700 focus:border-purple-500'}`} value={config.circleSpacingM ?? 35} onChange={(e)=>setConfig({...config, circleSpacingM: e.target.value})} onBlur={(e)=>{let v = parseFloat(e.target.value); if(!isFinite(v) || v < 25) v = 25; const n = {...config, circleSpacingM: v}; setConfig(n); generateGrid(n, false);}} /></div>
+                        <div><label className="text-xs text-slate-500 block mb-1.5 font-bold text-purple-500"><i className="fas fa-bullseye mr-1"></i>半徑/圈距(m)<span className="text-slate-400 font-normal"> ・第1圈半徑與每圈遞增皆用此值</span></label><input type="number" step="1" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 font-bold ${isDark ? 'bg-slate-900 border-purple-500/50 text-purple-300 focus:border-purple-400' : 'bg-purple-50 border-purple-300 text-purple-700 focus:border-purple-500'}`} value={config.circleSpacingM ?? 35} onChange={(e)=>setConfig({...config, circleSpacingM: e.target.value})} onBlur={(e)=>{let v = parseFloat(e.target.value); if(!isFinite(v) || v <= 0) v = 35; const n = {...config, circleSpacingM: v}; setConfig(n); generateGrid(n, false);}} /></div>
                       </>
                     )}
                     <div><label className="text-xs text-slate-500 block mb-1.5">時速(km/h)</label><input type="number" className={`w-full border rounded p-2 text-sm outline-none transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400 focus:bg-white'}`} value={config.speedKmH} onChange={(e)=>setConfig({...config, speedKmH: e.target.value})} onBlur={()=>generateGrid(null, false)} /></div>
