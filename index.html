@@ -1737,8 +1737,8 @@
           const map = L.map('leaflet-map-m2').setView([25.033, 121.565], 15);
           mapRef.current = map;
           
-          L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-            maxZoom: 19, attribution: '&copy; OpenStreetMap'
+          L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=cb1_2u06_1_ad7da3e95f007e5f300a4a5e', {
+            maxZoom: 19, attribution: '&copy; OpenStreetMap, &copy; CARTO'
           }).addTo(map);
 
           layerGroupRef.current = L.layerGroup().addTo(map);
@@ -2122,7 +2122,7 @@
         if (!mapRef.current) {
           const map = L.map('leaflet-map', { preferCanvas: true }).setView([25.033, 121.565], 15); 
           mapRef.current = map;
-          tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+          tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=cb1_2u06_1_ad7da3e95f007e5f300a4a5e', { maxZoom: 19, attribution: '&copy; OpenStreetMap, &copy; CARTO' }).addTo(map);
 
           map.pm.addControls({ position: 'topleft', drawCircle: false, drawCircleMarker: false, drawPolyline: false, drawText: false, cutPolygon: false, editMode: true, dragMode: true, removalMode: true, drawMarker: false });
           map.pm.setLang('zh_tw');
