@@ -334,6 +334,10 @@
       LAT_TO_M: 111132,             
       FLW_SAFE_RADIUS_M: 25,        
       FLW_MAX_RADIUS_M: 40,         
+      // 遊戲真實種花判定範圍參考（依 Pikipedia 資料：矩形沿南北軸較長，固定朝向不隨移動方向旋轉）。
+      // 僅供畫面上的固定參考矩形使用，不影響任何路徑演算法。
+      PLANT_RECT_NS_M: 30,
+      PLANT_RECT_EW_M: 25,
       S2_SPACING_KM: 0.0778,        
       MIN_LAT: -90, MAX_LAT: 90,    
       MIN_LON: -180, MAX_LON: 180   
@@ -620,7 +624,7 @@
 
     // --- 共用 GPX / CSV / 下載工具（原本三個模式各寫一份，抽成單一實作） ---
     // points: [{lat, lon, name?}] ; name 省略時該 <trkpt> 不輸出 <n> 標籤（對應 Mode3 的無名稱寫法）
-    const pointsToGPX = (points, trackName, creator = 'V38.5') => {
+    const pointsToGPX = (points, trackName, creator = 'V38.6') => {
       let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="${creator}">\n  <trk><name>${trackName}</name><trkseg>\n`;
       points.forEach(p => {
         const nameTag = p.name ? `<name>${p.name}</name>` : '';
@@ -810,6 +814,13 @@
       
       // 當外部 state 初始化時同步到 temp
       useEffect(() => { setTempHarvestDist(harvestDist); }, [harvestDist]);
+
+      // O 型圓舞路徑的繞圈半徑：僅影響 O 型的種花路徑本身（圓弧半徑），
+      // 不影響 S/N 型（S/N 仍固定使用 CONSTANTS.FLW_SAFE_RADIUS_M），
+      // 也不影響「南北30×東西25」的種花範圍參考矩形（那是獨立、固定的遊戲機制參考）。
+      const [oRadius, setORadius] = useStickyState(25, 'pikmin_v38.5_m1_oradius');
+      const [tempORadius, setTempORadius] = useState(oRadius);
+      useEffect(() => { setTempORadius(oRadius); }, [oRadius]);
 
       const [points, setPoints] = useState([]);
       const [activeIdx, setActiveIdx] = useState(null);
@@ -1079,7 +1090,7 @@
 
             for (let i = 1; i <= POINT_COUNT; i++) {
                 const a = isCw ? (outAngle + (i - POINT_COUNT) * ANGLE_STEP) : (outAngle - (i - POINT_COUNT) * ANGLE_STEP);
-                b.push({ x: CONSTANTS.FLW_SAFE_RADIUS_M * Math.sin(a), y: CONSTANTS.FLW_SAFE_RADIUS_M * Math.cos(a) }); 
+                b.push({ x: oRadius * Math.sin(a), y: oRadius * Math.cos(a) }); 
             }
             const mLon = getLonToMeters(lat);
             return b.map(m => { return { l: lat + (m.y / CONSTANTS.LAT_TO_M), n: lon + (m.x / mLon) }; });
@@ -1145,7 +1156,7 @@
             setLoading(false);
           }
         }, 10);
-      }, [points, patternType, harvestDist, offsetSide]);
+      }, [points, patternType, harvestDist, offsetSide, oRadius]);
 
       useEffect(() => {
         if (points.length === 0) { setStats({ distKm: 0, timeMin: 0, pureDistKm: 0 }); return; }
@@ -1173,7 +1184,7 @@
         } catch(e) {
           console.error("Stats Error:", e);
         }
-      }, [points, speedKmH, patternType]);
+      }, [points, speedKmH, patternType, oRadius]);
 
       const handleDiagnostic = useCallback(() => {
         if (points.length <= 1) { setDiagnosticMsg({ type: 'info', text: '請至少輸入兩個座標才能診斷。' }); return; }
@@ -1239,18 +1250,24 @@
             y: 2000 - (((lat - fMinLat) / (fMaxLat - fMinLat)) * 2000) 
         });
         const c = { lat: midLat, lon: midLon }; 
+        // rSafe 保留作為畫面上其他元素（選取脈動光圈、中心點、起訖點小圓點大小）的比例基準，
+        // 但不再畫出對應的 25m 琥珀色參考圈本身。
         const rSafe = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + CONSTANTS.FLW_SAFE_RADIUS_M/CONSTANTS.LAT_TO_M, c.lon).y);
         const r40 = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + CONSTANTS.FLW_MAX_RADIUS_M/CONSTANTS.LAT_TO_M, c.lon).y);
         const r45 = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + 45/CONSTANTS.LAT_TO_M, c.lon).y);
         const rTarget = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + harvestDist/CONSTANTS.LAT_TO_M, c.lon).y);
+        // 種花範圍參考矩形（固定南北30m×東西25m，永遠不隨路徑角度/方向旋轉）的半寬/半高像素值。
+        // 南北用緯度換算（跟 LAT_TO_M 相關，跟經度無關）；東西用經度換算（需用 getLonToMeters 校正緯度影響）。
+        const rectHalfNSpx = Math.abs(toSVG(c.lat, c.lon).y - toSVG(c.lat + (CONSTANTS.PLANT_RECT_NS_M/2)/CONSTANTS.LAT_TO_M, c.lon).y);
+        const rectHalfEWpx = Math.abs(toSVG(c.lat, c.lon).x - toSVG(c.lat, c.lon + (CONSTANTS.PLANT_RECT_EW_M/2)/getLonToMeters(c.lat)).x);
 
         return { 
-            toSVG, rSafe, r40, r45, rTarget, 
+            toSVG, rSafe, r40, r45, rTarget, rectHalfNSpx, rectHalfEWpx,
             pPaths: pPaths.map(pth => pth.map(p => toSVG(p.l, p.n))), 
             fPaths: fPathsRaw.map(p => ({ ...toSVG(p.lat, p.lon), isResolved: p.isResolved })),
             fruitUnsafeCount: fPathsRaw.unsafeFallbackCount || 0
         };
-      }, [points, patternType, harvestDist, offsetSide]);
+      }, [points, patternType, harvestDist, offsetSide, oRadius]);
 
       useInteractiveMap(svgRef, transformRef, setTransform);
       const resetZoom = () => setTransform({ k: 1, x: 0, y: 0 });
@@ -1367,6 +1384,21 @@
             </div>
 
             <div className="p-4 rounded-xl border shrink-0 transition-colors duration-300 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-xl">
+
+              {/* --- 新增：O 型專用圓舞半徑微調面板，只在 patternType==='O' 時顯示 --- */}
+              {patternType === 'O' && (
+                <div className={`px-3 py-2 rounded-lg border mb-3 flex items-center justify-between transition-colors ${isDark ? 'bg-slate-900 border-slate-700' : theme.bgSubtle + ' ' + theme.border}`}>
+                    <div className={`text-xs font-bold flex items-center shrink-0 mr-3 ${theme.text}`}>
+                        <i className="fas fa-sync-alt mr-1.5"></i> 圓舞半徑
+                    </div>
+                    <div className="flex-1 flex items-center gap-2">
+                        <label className={`text-xs font-bold whitespace-nowrap hidden sm:block ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>繞圈半徑:</label>
+                        {/* 比照採果偏移距離滑桿的 debounce 寫法：拖動時只更新 UI 顯示，放開才觸發重新計算 */}
+                        <input type="range" min="10" max="40" value={tempORadius} onChange={(e)=>setTempORadius(parseInt(e.target.value))} onMouseUp={()=>setORadius(tempORadius)} onTouchEnd={()=>setORadius(tempORadius)} className={`flex-1 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg cursor-pointer ${theme.bg.replace('bg-', 'accent-')}`} />
+                        <span className={`text-xs font-mono font-bold w-9 text-right ${theme.text}`}>[{tempORadius}m]</span>
+                    </div>
+                </div>
+              )}
               
               {/* --- 新增：超緊湊 🍎 採果微調面板 --- */}
               <div className={`px-3 py-2 rounded-lg border mb-3 flex items-center justify-between transition-colors ${isDark ? 'bg-slate-900 border-slate-700' : theme.bgSubtle + ' ' + theme.border}`}>
@@ -1448,8 +1480,8 @@
                         <circle cx={fx} cy={fy} r={vData.rTarget} fill="none" stroke="rgba(244, 63, 94, 0.4)" strokeWidth={1/transform.k} className="pointer-events-none"/>
                         <circle cx={fx} cy={fy} r={vData.r45} fill="rgba(16, 185, 129, 0.05)" stroke={isDark ? "rgba(16, 185, 129, 0.5)" : "rgba(16, 185, 129, 0.6)"} strokeWidth={1/transform.k} strokeDasharray="4,4" className="pointer-events-none"/>
 
-                        <circle cx={fx} cy={fy} r={vData.r40} fill={theme.hexMain} fillOpacity="0.05" stroke={isDark ? "#64748b" : "#cbd5e1"} strokeWidth={1.5/transform.k} strokeDasharray="5,5"/>
-                        <circle cx={fx} cy={fy} r={vData.rSafe} fill="none" stroke={isDark ? "#f59e0b" : "#d97706"} strokeWidth={1/transform.k} strokeDasharray="2,2" opacity={isDark ? "0.4" : "0.5"}/>
+                        {/* 40m 最大採集半徑參考圈：純遊戲機制參考，不跟花瓣路徑或矩形連動，線條加粗方便辨識 */}
+                        <circle cx={fx} cy={fy} r={vData.r40} fill={theme.hexMain} fillOpacity="0.05" stroke={isDark ? "#64748b" : "#cbd5e1"} strokeWidth={2.5/transform.k} strokeDasharray="6,4"/>
                         <circle 
                             cx={fx} cy={fy} 
                             r={isActive ? vData.rSafe*0.4 : vData.rSafe*0.25} 
@@ -1462,7 +1494,23 @@
                         />
                         <text x={fx} y={fy} textAnchor="middle" dominantBaseline="central" fill={isActive ? "#083344" : (isDark ? "#0f172a" : "#334155")} fontSize={18/transform.k} fontWeight="bold" className="pointer-events-none">{i+1}</text>
                         
-                        <polyline points={p.map(x=>`${x.x},${x.y}`).join(' ')} fill="none" stroke={theme.hexLine} strokeWidth={vData.rSafe * 1.5} strokeLinejoin="round" strokeLinecap="round" opacity="0.15" className="pointer-events-none"/>
+                        {/* 種花範圍光暈：沿著花瓣路徑（S型方框/N型菱形/O型圓弧）畫出，
+                            改用「固定南北30m×東西25m」的矩形筆刷描邊，取代原本圓形粗細的色暈，
+                            矩形本身永遠固定朝正南北/正東西（依 Pikipedia 遊戲機制：種花矩形沿南北軸較長，
+                            不隨移動方向旋轉），只是沿著路徑逐段延伸——做法是對路徑每一段(相鄰兩點)
+                            取其座標範圍的軸對齊外框，再往南北/東西各自擴張半寬，多段疊起來就等於
+                            用矩形斷面沿路徑「掃」過去的效果。整組疊在同一個 <g opacity> 群組裡，
+                            避免重疊處因為半透明疊加而顏色變深。 */}
+                        <g opacity="0.15" className="pointer-events-none">
+                          {p.slice(0, -1).map((pt, segIdx) => {
+                            const pt2 = p[segIdx + 1];
+                            const minX = Math.min(pt.x, pt2.x) - vData.rectHalfEWpx;
+                            const maxX = Math.max(pt.x, pt2.x) + vData.rectHalfEWpx;
+                            const minY = Math.min(pt.y, pt2.y) - vData.rectHalfNSpx;
+                            const maxY = Math.max(pt.y, pt2.y) + vData.rectHalfNSpx;
+                            return <rect key={`halo${segIdx}`} x={minX} y={minY} width={maxX - minX} height={maxY - minY} fill={theme.hexLine} />;
+                          })}
+                        </g>
                         <polyline points={p.map(x=>`${x.x},${x.y}`).join(' ')} fill="none" stroke={theme.hexLine} strokeWidth={4/transform.k} strokeLinejoin="round" strokeLinecap="round" className="pointer-events-none"/>
                         
                         <circle cx={p[0].x} cy={p[0].y} r={vData.rSafe*0.15} fill={isDark ? "#60a5fa" : "#2563eb"} className="pointer-events-none"/>
@@ -1713,7 +1761,7 @@
             const td = pts.reduce((acc, p, i) => i===0 ? 0 : acc + calcDistanceKm(pts[i-1], p), 0);
             setStats({ dist: td.toFixed(2), time: Math.round((td / speed) * 60) });
 
-            const xml = pointsToGPX(pts, `Sweep_${axis}`, 'V38.5_Map_M2');
+            const xml = pointsToGPX(pts, `Sweep_${axis}`, 'V38.6_Map_M2');
             const csv = pointsToCSV(pts);
             setGpxOut(xml); setCsvOut(csv);
             
@@ -1797,7 +1845,7 @@
                 
                 // 即時更新輸出 (含旋轉過後的座標)
                 const normPts = rotatedFlatPath.map(p => ({ lat: Array.isArray(p) ? p[0] : p.lat, lon: Array.isArray(p) ? p[1] : p.lon }));
-                const xml = pointsToGPX(normPts, 'Text_Path', 'V38.5_Map_M2');
+                const xml = pointsToGPX(normPts, 'Text_Path', 'V38.6_Map_M2');
                 const csv = pointsToCSV(normPts);
                 setGpxOut(xml); setCsvOut(csv);
 
@@ -2374,7 +2422,7 @@
             const unitLabel = gridSource === 'S2' ? '個 S2 網格' : '個座標點';
 
             const normPath = outputPath.map(p => ({ lat: p.lat, lon: p.lng }));
-            const gpxStr = pointsToGPX(normPath, gridSource === 'S2' ? 'S2_Map_Sweep' : 'Custom_Grid_Sweep', 'V38.5_Mode3');
+            const gpxStr = pointsToGPX(normPath, gridSource === 'S2' ? 'S2_Map_Sweep' : 'Custom_Grid_Sweep', 'V38.6_Mode3');
             const csvStr = pointsToCSV(normPath);
             setGpxOut(gpxStr); setCsvOut(csvStr);
             setBadgeText(simplifyPath
@@ -2551,7 +2599,7 @@
                 <i className={`fab fa-neos text-3xl ${isDark ? 'text-emerald-400' : 'text-slate-800'}`}></i>
                 <div>
                   <h1 className={`text-xl font-black tracking-wider uppercase ${isDark ? 'text-white' : 'text-slate-800'}`}>PIKMIN NAVIGATOR</h1>
-                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-slate-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V38.5<span className="border px-1.5 py-0.5 rounded-sm text-xs font-bold shadow-sm transition-colors duration-300 bg-slate-100 dark:bg-blue-600 text-slate-700 dark:text-white border-slate-200 dark:border-transparent">寫字測試中</span></p>
+                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-slate-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V38.6</p>
                 </div>
               </div>
               <div className="flex rounded-lg p-1.5 border w-full sm:w-auto mt-3 sm:mt-0 transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 overflow-x-auto custom-scrollbar">
