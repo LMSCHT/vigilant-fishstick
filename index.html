@@ -2190,7 +2190,35 @@
             }
           });
         }
-        return () => { if (mapRef.current) { mapRef.current.off(); mapRef.current.remove(); mapRef.current = null; } };
+        return () => {
+          if (mapRef.current) {
+            // Leaflet-Geoman 已知邊界情況：地圖被移除(map.remove())時，如果畫出來的圖層
+            // 還處於「編輯模式」中，Geoman 內部清理頂點標記的 DOM class 時可能踩到
+            // 節點已經被移除/尚未就緒的情況，導致 TypeError: Cannot read properties of
+            // undefined (reading 'classList')，進而讓整個 App 被 ErrorBoundary 攔截崩潰。
+            // 對策：移除地圖前，先明確讓所有圖層退出編輯狀態，並把整段清理包 try-catch
+            // 兜底，即使套件內部仍然出錯，也只是靜默略過，不會讓使用者切換模式時整頁報錯。
+            try {
+              if (drawnLayerRef.current && drawnLayerRef.current.pm) {
+                drawnLayerRef.current.pm.disable();
+              }
+              mapRef.current.eachLayer((layer) => {
+                if (layer.pm && typeof layer.pm.disable === 'function') {
+                  try { layer.pm.disable(); } catch (e) { /* 忽略單一圖層清理失敗 */ }
+                }
+              });
+            } catch (e) {
+              console.warn('清理繪圖編輯狀態時發生非致命錯誤：', e);
+            }
+            try {
+              mapRef.current.off();
+              mapRef.current.remove();
+            } catch (e) {
+              console.warn('移除地圖時發生非致命錯誤（已忽略，不影響切換模式）：', e);
+            }
+            mapRef.current = null;
+          }
+        };
       }, []);
 
       // Scanline 用：計算某一水平掃描線（固定 lat）跟多邊形所有邊的交點 lng 座標，由小到大排序後回傳。
