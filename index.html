@@ -22,6 +22,11 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.20.0/dist/leaflet-geoman.css" />
   <script src="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.20.0/dist/leaflet-geoman.min.js"></script>
 
+  <!-- Google 底圖選項用：透過官方 Google Maps JS API 顯示（非土炮 tile URL），
+       此套件本身不需要 API Key 就能載入，實際顯示 Google 底圖時才需要動態載入
+       Google Maps JS API 並帶入使用者自己的 Key -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet.gridlayer.googlemutant@0.14.1/dist/Leaflet.GoogleMutant.js"></script>
+
   <!-- 引入 opentype.js 解析真實字型外框 -->
   <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 
@@ -624,7 +629,7 @@
 
     // --- 共用 GPX / CSV / 下載工具（原本三個模式各寫一份，抽成單一實作） ---
     // points: [{lat, lon, name?}] ; name 省略時該 <trkpt> 不輸出 <n> 標籤（對應 Mode3 的無名稱寫法）
-    const pointsToGPX = (points, trackName, creator = 'V38.6') => {
+    const pointsToGPX = (points, trackName, creator = 'V38.7') => {
       let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="${creator}">\n  <trk><name>${trackName}</name><trkseg>\n`;
       points.forEach(p => {
         const nameTag = p.name ? `<name>${p.name}</name>` : '';
@@ -712,6 +717,136 @@
       return (
         <div className={`absolute top-4 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full z-[1000] flex items-center gap-2 font-bold text-sm shadow-md dark:shadow-xl transition-colors duration-300 max-w-[90%] text-center ${styleMap[toast.type] || styleMap.error}`}>
           <i className={`fas ${iconMap[toast.type] || iconMap.error}`}></i>{toast.text}
+        </div>
+      );
+    }
+
+    // --- 共用底圖模組（Mode2 / Mode3 共用同一份全域設定，切換模式不會跑掉）---
+    // 只保留三個選項：Carto 明亮（免key，內建）、OSM 標準（免key）、Google 道路（需自備 API Key）
+    const BASEMAP_SOURCES = {
+      CARTO_VOYAGER: {
+        label: 'Carto', icon: 'fa-map', kind: 'xyz',
+        url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=cb1_2u06_1_ad7da3e95f007e5f300a4a5e',
+        attribution: '&copy; OpenStreetMap, &copy; CARTO', maxZoom: 19, subdomains: 'abcd'
+      },
+      OSM: {
+        label: 'OSM', icon: 'fa-globe', kind: 'xyz',
+        url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        attribution: '&copy; OpenStreetMap contributors', maxZoom: 19, subdomains: 'abc'
+      },
+      GOOGLE_ROADMAP: {
+        label: 'Google Map', icon: 'fa-road', kind: 'google', type: 'roadmap'
+      }
+    };
+    const DEFAULT_BASEMAP_CONFIG = { source: 'CARTO_VOYAGER', googleApiKey: '' };
+
+    // 動態載入 Google Maps JS API（僅在使用者實際選用 Google 底圖時才載入，避免平白佔用額度）。
+    // 瀏覽器限制：同一個分頁只能載入一次 Google Maps JS API，且是綁定當次載入用的 Key，
+    // 之後若要換一組不同的 Key，必須整頁重新整理才會生效，沒辦法在原分頁動態換掉。
+    function loadGoogleMapsScript(apiKey) {
+      if (window.google && window.google.maps) return Promise.resolve();
+      if (window.__pikminGMapsLoadingKey && window.__pikminGMapsLoadingKey !== apiKey) {
+        // 同一分頁已經用「另一組」Key 載入過，這裡沒辦法補救，直接告知呼叫端
+        return Promise.reject(new Error('本次分頁已經用不同的 API Key 載入過 Google Maps，請重新整理頁面後再套用新 Key。'));
+      }
+      if (window.__pikminGMapsLoadingPromise) return window.__pikminGMapsLoadingPromise;
+      window.__pikminGMapsLoadingKey = apiKey;
+      window.__pikminGMapsLoadingPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}`;
+        script.async = true;
+        script.onload = () => resolve();
+        script.onerror = () => { window.__pikminGMapsLoadingPromise = null; window.__pikminGMapsLoadingKey = null; reject(new Error('Google Maps API 載入失敗，請確認 API Key 是否正確、額度是否足夠，或網路連線是否正常。')); };
+        document.head.appendChild(script);
+      });
+      return window.__pikminGMapsLoadingPromise;
+    }
+
+    // 將指定底圖套用到某個 leaflet map 實例上；currentLayerRef 是呼叫端自己持有的 ref，
+    // 用來記錄「目前掛在地圖上的那一層」，換底圖時才知道要先移除誰，避免疊圖。
+    async function applyBasemap(map, currentLayerRef, basemapConfig, onError) {
+      const src = BASEMAP_SOURCES[basemapConfig && basemapConfig.source] || BASEMAP_SOURCES.CARTO_VOYAGER;
+      try {
+        if (src.kind === 'google') {
+          const apiKey = (basemapConfig && basemapConfig.googleApiKey || '').trim();
+          if (!apiKey) { onError && onError('請先在底圖選單輸入 Google Maps API Key，才能切換到 Google 底圖（切換前維持原底圖不變）。'); return; }
+          if (typeof L.gridLayer.googleMutant !== 'function') { onError && onError('Google 底圖套件載入失敗，請重新整理頁面再試一次。'); return; }
+          await loadGoogleMapsScript(apiKey);
+          if (currentLayerRef.current) { map.removeLayer(currentLayerRef.current); currentLayerRef.current = null; }
+          const layer = L.gridLayer.googleMutant({ type: src.type });
+          layer.addTo(map);
+          currentLayerRef.current = layer;
+        } else {
+          if (currentLayerRef.current) { map.removeLayer(currentLayerRef.current); currentLayerRef.current = null; }
+          const layer = L.tileLayer(src.url, { maxZoom: src.maxZoom || 19, subdomains: src.subdomains || 'abc', attribution: src.attribution });
+          layer.addTo(map);
+          currentLayerRef.current = layer;
+        }
+      } catch (e) {
+        console.error('底圖切換失敗：', e);
+        onError && onError(e.message || '底圖切換失敗，請確認 API Key 或網路連線。');
+      }
+    }
+
+    // 底圖選單 UI：一顆按鈕 + 下拉面板，Mode2/Mode3 共用同一份 basemapConfig/setBasemapConfig（來自 App 層級）。
+    function BasemapSelector({ isDark, basemapConfig, setBasemapConfig, showToast }) {
+      const [open, setOpen] = useState(false);
+      const [keyInput, setKeyInput] = useState((basemapConfig && basemapConfig.googleApiKey) || '');
+      const wrapRef = useRef(null);
+      useEffect(() => { setKeyInput((basemapConfig && basemapConfig.googleApiKey) || ''); }, [basemapConfig && basemapConfig.googleApiKey]);
+
+      useEffect(() => {
+        if (!open) return;
+        const onDocClick = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+        document.addEventListener('mousedown', onDocClick);
+        return () => document.removeEventListener('mousedown', onDocClick);
+      }, [open]);
+
+      const current = BASEMAP_SOURCES[basemapConfig && basemapConfig.source] || BASEMAP_SOURCES.CARTO_VOYAGER;
+      const selectSource = (key) => {
+        const src = BASEMAP_SOURCES[key];
+        if (src.kind === 'google' && !((basemapConfig && basemapConfig.googleApiKey || '').trim())) {
+          // 還沒填 Key 就選 Google：先切換選取狀態讓 Key 輸入框跳出來，但暫不真的觸發套用（套用邏輯本身也會擋、跳 toast）
+          setBasemapConfig(c => ({ ...c, source: key }));
+          return;
+        }
+        setBasemapConfig(c => ({ ...c, source: key }));
+      };
+      const applyKey = () => {
+        const trimmed = keyInput.trim();
+        if (!trimmed) { showToast && showToast('請先輸入 Google Maps API Key。', 'error'); return; }
+        setBasemapConfig(c => ({ ...c, googleApiKey: trimmed }));
+      };
+
+      return (
+        <div ref={wrapRef} className="relative pointer-events-auto">
+          <button onClick={() => setOpen(o => !o)} className="border px-3 py-2 rounded-lg text-xs transition active:scale-95 flex items-center gap-1.5 shadow-sm font-semibold duration-300 bg-slate-100 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-white">
+            <i className={`fas ${current.icon}`}></i><span className="hidden sm:inline">{current.label}</span><i className="fas fa-chevron-down text-[10px] opacity-60"></i>
+          </button>
+          {open && (
+            <div className={`absolute right-0 mt-2 w-60 rounded-lg border shadow-xl z-[1200] p-2.5 space-y-1 transition-colors duration-300 ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
+              <div className="text-[11px] font-bold mb-1 px-1 text-slate-500 dark:text-slate-400">底圖來源</div>
+              {Object.entries(BASEMAP_SOURCES).map(([key, src]) => (
+                <button key={key} onClick={() => selectSource(key)}
+                  className={`w-full text-left px-2 py-1.5 rounded text-xs font-semibold transition flex items-center gap-2 ${basemapConfig.source === key ? (isDark ? 'bg-blue-600 text-white' : 'bg-slate-800 text-white') : (isDark ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100')}`}>
+                  <i className={`fas ${src.icon} w-3.5 text-center`}></i>{src.label}
+                  {src.kind === 'google' && <i className="fas fa-key ml-auto text-[10px] opacity-60"></i>}
+                </button>
+              ))}
+              {BASEMAP_SOURCES[basemapConfig.source] && BASEMAP_SOURCES[basemapConfig.source].kind === 'google' && (
+                <div className="pt-2 mt-1 border-t border-slate-200 dark:border-slate-700">
+                  <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1 px-1">Google Maps API Key</label>
+                  <input type="text" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder="貼上您的 API Key..."
+                    className={`w-full border rounded p-1.5 text-xs outline-none font-mono transition-colors duration-300 ${isDark ? 'bg-slate-900 border-slate-600 text-white focus:border-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800 focus:border-slate-400'}`} />
+                  <button onClick={applyKey} className="mt-1.5 w-full text-xs font-bold py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white transition active:scale-95">套用 Key</button>
+                  <p className="text-[10px] mt-1.5 px-0.5 leading-relaxed text-amber-600 dark:text-amber-400">
+                    <i className="fas fa-exclamation-circle mr-1"></i>
+                    若之前已用別組 Key 載入過 Google Maps，換 Key 需要重新整理頁面才會生效（瀏覽器限制，同一分頁只能載入一次）。
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       );
     }
@@ -1540,9 +1675,10 @@
     }
 
     // --- 【子元件：模式二 幾何盲掃矩陣與文字路徑】 ---
-    function Mode2({ isDark }) {
+    function Mode2({ isDark, basemapConfig, setBasemapConfig }) {
       const mapRef = useRef(null);
       const layerGroupRef = useRef(null);
+      const tileLayerRef = useRef(null);
       
       const [config, setConfig] = useStickyState({ startCoord: '', width: '1.5', rows: '20', axis: 'LINE', sweepDir: 'R', advDir: 'F', speedKmH: 18, angle: 0, layers: 1, lineSpacingM: 78, circleSpacingM: 35 }, 'pikmin_v38.5_m2_config');
       const configRef = useRef(config);
@@ -1761,7 +1897,7 @@
             const td = pts.reduce((acc, p, i) => i===0 ? 0 : acc + calcDistanceKm(pts[i-1], p), 0);
             setStats({ dist: td.toFixed(2), time: Math.round((td / speed) * 60) });
 
-            const xml = pointsToGPX(pts, `Sweep_${axis}`, 'V38.6_Map_M2');
+            const xml = pointsToGPX(pts, `Sweep_${axis}`, 'V38.7_Map_M2');
             const csv = pointsToCSV(pts);
             setGpxOut(xml); setCsvOut(csv);
             
@@ -1784,10 +1920,8 @@
         if (!mapRef.current) {
           const map = L.map('leaflet-map-m2').setView([25.033, 121.565], 15);
           mapRef.current = map;
-          
-          L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=cb1_2u06_1_ad7da3e95f007e5f300a4a5e', {
-            maxZoom: 19, attribution: '&copy; OpenStreetMap, &copy; CARTO'
-          }).addTo(map);
+
+          // 底圖本身改由下面獨立的 basemapConfig effect 負責建立/切換，這裡不再寫死 Carto
 
           layerGroupRef.current = L.layerGroup().addTo(map);
 
@@ -1804,9 +1938,16 @@
              mapRef.current.off();
              mapRef.current.remove();
              mapRef.current = null;
+             tileLayerRef.current = null;
           }
         };
       }, [generateGrid]);
+
+      // 底圖套用/切換：初次掛載時建立，之後 basemapConfig（來源或 Google Key）變動時重新套用
+      useEffect(() => {
+        if (!mapRef.current) return;
+        applyBasemap(mapRef.current, tileLayerRef, basemapConfig, (msg) => showToast(msg, 'error', 6000));
+      }, [basemapConfig && basemapConfig.source, basemapConfig && basemapConfig.googleApiKey]);
 
       // --- 全新 Drawing Effect：處理幾何線條與文字的即時繪製 ---
       useEffect(() => {
@@ -1845,7 +1986,7 @@
                 
                 // 即時更新輸出 (含旋轉過後的座標)
                 const normPts = rotatedFlatPath.map(p => ({ lat: Array.isArray(p) ? p[0] : p.lat, lon: Array.isArray(p) ? p[1] : p.lon }));
-                const xml = pointsToGPX(normPts, 'Text_Path', 'V38.6_Map_M2');
+                const xml = pointsToGPX(normPts, 'Text_Path', 'V38.7_Map_M2');
                 const csv = pointsToCSV(normPts);
                 setGpxOut(xml); setCsvOut(csv);
 
@@ -2134,7 +2275,10 @@
           <div className="order-1 lg:order-2 lg:col-span-8 rounded-xl border relative overflow-hidden min-h-[50vh] lg:h-full flex flex-col pb-4 transition-colors duration-300 bg-white dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-2xl z-10">
              <div className="absolute top-3 left-3 z-20 flex gap-2 w-full pr-6 pointer-events-none">
                <span className={`px-3 py-2 rounded-lg text-xs border shadow-sm dark:shadow-md backdrop-blur pointer-events-auto flex items-center gap-1.5 font-bold transition-colors duration-300 bg-white/90 dark:bg-slate-900/90 border-slate-200 dark:border-slate-700 ${isDark ? 'text-blue-400' : 'text-slate-800'}`}><i className="fas fa-hand-pointer mr-1 text-blue-500"></i> 點擊地圖設定起點</span>
-               <button onClick={centerPath} className="border px-3 py-2 rounded-lg text-xs pointer-events-auto ml-auto transition active:scale-95 flex items-center gap-1.5 shadow-sm font-semibold duration-300 bg-slate-100 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-white"><i className="fas fa-crosshairs"></i>置中軌跡</button>
+               <div className="ml-auto flex gap-2 pointer-events-none">
+                 <BasemapSelector isDark={isDark} basemapConfig={basemapConfig} setBasemapConfig={setBasemapConfig} showToast={showToast} />
+                 <button onClick={centerPath} className="border px-3 py-2 rounded-lg text-xs pointer-events-auto transition active:scale-95 flex items-center gap-1.5 shadow-sm font-semibold duration-300 bg-slate-100 dark:bg-slate-700/90 border-slate-200 dark:border-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-white"><i className="fas fa-crosshairs"></i>置中軌跡</button>
+               </div>
              </div>
              
              <div id="leaflet-map-m2" className="absolute inset-0 z-0"></div>
@@ -2144,7 +2288,7 @@
     }
 
     // --- 【子元件：模式三 地圖圈地真實 S2 掃蕩】 ---
-    function Mode3({ isDark }) {
+    function Mode3({ isDark, basemapConfig, setBasemapConfig }) {
       const mapRef = useRef(null);
       const tileLayerRef = useRef(null);
       const drawnLayerRef = useRef(null);
@@ -2170,7 +2314,7 @@
         if (!mapRef.current) {
           const map = L.map('leaflet-map', { preferCanvas: true }).setView([25.033, 121.565], 15); 
           mapRef.current = map;
-          tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=cb1_2u06_1_ad7da3e95f007e5f300a4a5e', { maxZoom: 19, attribution: '&copy; OpenStreetMap, &copy; CARTO' }).addTo(map);
+          // 底圖本身改由下面獨立的 basemapConfig effect 負責建立/切換，這裡不再寫死 Carto
 
           map.pm.addControls({ position: 'topleft', drawCircle: false, drawCircleMarker: false, drawPolyline: false, drawText: false, cutPolygon: false, editMode: true, dragMode: true, removalMode: true, drawMarker: false });
           map.pm.setLang('zh_tw');
@@ -2217,9 +2361,16 @@
               console.warn('移除地圖時發生非致命錯誤（已忽略，不影響切換模式）：', e);
             }
             mapRef.current = null;
+            tileLayerRef.current = null;
           }
         };
       }, []);
+
+      // 底圖套用/切換：初次掛載時建立，之後 basemapConfig（來源或 Google Key）變動時重新套用
+      useEffect(() => {
+        if (!mapRef.current) return;
+        applyBasemap(mapRef.current, tileLayerRef, basemapConfig, (msg) => showToast(msg, 'error', 6000));
+      }, [basemapConfig && basemapConfig.source, basemapConfig && basemapConfig.googleApiKey]);
 
       // Scanline 用：計算某一水平掃描線（固定 lat）跟多邊形所有邊的交點 lng 座標，由小到大排序後回傳。
       // 交點採跟原本 pointInPolygon 完全相同的 even-odd 判斷條件與內插公式，只是從「逐點檢查」
@@ -2450,7 +2601,7 @@
             const unitLabel = gridSource === 'S2' ? '個 S2 網格' : '個座標點';
 
             const normPath = outputPath.map(p => ({ lat: p.lat, lon: p.lng }));
-            const gpxStr = pointsToGPX(normPath, gridSource === 'S2' ? 'S2_Map_Sweep' : 'Custom_Grid_Sweep', 'V38.6_Mode3');
+            const gpxStr = pointsToGPX(normPath, gridSource === 'S2' ? 'S2_Map_Sweep' : 'Custom_Grid_Sweep', 'V38.7_Mode3');
             const csvStr = pointsToCSV(normPath);
             setGpxOut(gpxStr); setCsvOut(csvStr);
             setBadgeText(simplifyPath
@@ -2599,6 +2750,9 @@
           </div>
           
           <div className="lg:col-span-8 rounded-xl border relative overflow-hidden min-h-[50vh] lg:h-full flex flex-col transition-colors duration-300 bg-white dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-2xl z-10">
+            <div className="absolute top-3 right-3 z-20 pointer-events-none">
+              <BasemapSelector isDark={isDark} basemapConfig={basemapConfig} setBasemapConfig={setBasemapConfig} showToast={showToast} />
+            </div>
             <div id="leaflet-map" className="absolute inset-0 z-0"></div>
           </div>
         </div>
@@ -2608,6 +2762,8 @@
     function App() {
       const [appMode, setAppMode] = useStickyState('mode1', 'pikmin_v38.5_appmode');
       const [isDark, setIsDark] = useStickyState(true, 'pikmin_v38.5_theme_is_dark');
+      // 底圖來源：全域設定，Mode2/Mode3 共用同一份，切換模式時選擇不會跑掉
+      const [basemapConfig, setBasemapConfig] = useStickyState(DEFAULT_BASEMAP_CONFIG, 'pikmin_v38.5_basemap');
 
       useEffect(() => {
         if (isDark) {
@@ -2627,7 +2783,7 @@
                 <i className={`fab fa-neos text-3xl ${isDark ? 'text-emerald-400' : 'text-slate-800'}`}></i>
                 <div>
                   <h1 className={`text-xl font-black tracking-wider uppercase ${isDark ? 'text-white' : 'text-slate-800'}`}>PIKMIN NAVIGATOR</h1>
-                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-slate-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V38.6</p>
+                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-slate-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V38.7</p>
                 </div>
               </div>
               <div className="flex rounded-lg p-1.5 border w-full sm:w-auto mt-3 sm:mt-0 transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 overflow-x-auto custom-scrollbar">
@@ -2644,8 +2800,8 @@
             </div>
             <div className="flex-1 min-h-0 flex flex-col">
               {appMode==='mode1' && <Mode1 isDark={isDark} />}
-              {appMode==='mode2' && <Mode2 isDark={isDark} />}
-              {appMode==='mode3' && <Mode3 isDark={isDark} />}
+              {appMode==='mode2' && <Mode2 isDark={isDark} basemapConfig={basemapConfig} setBasemapConfig={setBasemapConfig} />}
+              {appMode==='mode3' && <Mode3 isDark={isDark} basemapConfig={basemapConfig} setBasemapConfig={setBasemapConfig} />}
             </div>
           </div>
         </div>
