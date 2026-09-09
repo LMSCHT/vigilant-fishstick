@@ -646,6 +646,31 @@
       a.click();
     };
 
+    // --- 共用地圖搜尋/定位大頭針工具（Mode2、Mode3 共用同一套邏輯）---
+    // 用 divIcon 畫一個明顯的大頭針圖示，跟現有 circleMarker 風格的起點/終點/網格結果點區隔開，
+    // 一眼就能認出「這是搜尋/定位用的標記」而不是路徑上的座標點。
+    const LOCATION_PIN_COLORS = { search: '#f97316', gps: '#2563eb' }; // 搜尋結果＝橘、GPS目前位置＝藍
+    const createPinDivIcon = (color) => L.divIcon({
+      className: '',
+      html: `<svg width="30" height="42" viewBox="0 0 30 42" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4));">
+               <path d="M15 0C6.7 0 0 6.7 0 15c0 10.5 15 27 15 27s15-16.5 15-27C30 6.7 23.3 0 15 0z" fill="${color}"/>
+               <circle cx="15" cy="15" r="6" fill="#ffffff"/>
+             </svg>`,
+      iconSize: [30, 42],
+      iconAnchor: [15, 42], // 尖端對齊實際座標點
+      popupAnchor: [0, -38]
+    });
+    // 在地圖上放置/更新單一個定位大頭針；markerRef 是呼叫端自己持有的 ref，
+    // 每次呼叫都會先移除舊的針，確保同時間畫面上只會有一根（搜尋/定位各自獨立一根 ref）。
+    const setLocationPin = (map, markerRef, lat, lng, colorKey, popupText) => {
+      if (!map) return;
+      if (markerRef.current) { map.removeLayer(markerRef.current); markerRef.current = null; }
+      const marker = L.marker([lat, lng], { icon: createPinDivIcon(LOCATION_PIN_COLORS[colorKey] || LOCATION_PIN_COLORS.search), zIndexOffset: 1000 });
+      if (popupText) marker.bindPopup(popupText).openPopup();
+      marker.addTo(map);
+      markerRef.current = marker;
+    };
+
     const getTheme = (type, isDark) => {
       if (isDark) {
         return {
@@ -1679,6 +1704,7 @@
       const mapRef = useRef(null);
       const layerGroupRef = useRef(null);
       const tileLayerRef = useRef(null);
+      const searchMarkerRef = useRef(null);
       
       const [config, setConfig] = useStickyState({ startCoord: '', width: '1.5', rows: '20', axis: 'LINE', sweepDir: 'R', advDir: 'F', speedKmH: 18, angle: 0, layers: 1, lineSpacingM: 78, circleSpacingM: 35 }, 'pikmin_v38.5_m2_config');
       const configRef = useRef(config);
@@ -1939,6 +1965,7 @@
              mapRef.current.remove();
              mapRef.current = null;
              tileLayerRef.current = null;
+             searchMarkerRef.current = null;
           }
         };
       }, [generateGrid]);
@@ -2027,7 +2054,10 @@
           const data = await response.json();
           if (data && data.length > 0) {
             const lat = parseFloat(data[0].lat); const lon = parseFloat(data[0].lon);
-            if (mapRef.current) mapRef.current.flyTo([lat, lon], 16, { duration: 1.5 });
+            if (mapRef.current) {
+              mapRef.current.flyTo([lat, lon], 16, { duration: 1.5 });
+              setLocationPin(mapRef.current, searchMarkerRef, lat, lon, 'search', data[0].display_name || searchQuery);
+            }
           } else {
             showToast('找不到該地點，請嘗試其他關鍵字', 'error');
           }
@@ -2044,7 +2074,10 @@
         navigator.geolocation.getCurrentPosition(
           (position) => {
             const lat = position.coords.latitude; const lng = position.coords.longitude;
-            if (mapRef.current) mapRef.current.flyTo([lat, lng], 16, { duration: 1.5 });
+            if (mapRef.current) {
+              mapRef.current.flyTo([lat, lng], 16, { duration: 1.5 });
+              setLocationPin(mapRef.current, searchMarkerRef, lat, lng, 'gps', '目前位置');
+            }
             setLoading(false);
           },
           (error) => {
@@ -2291,6 +2324,7 @@
     function Mode3({ isDark, basemapConfig, setBasemapConfig }) {
       const mapRef = useRef(null);
       const tileLayerRef = useRef(null);
+      const searchMarkerRef = useRef(null);
       const drawnLayerRef = useRef(null);
       const resultLayerGroupRef = useRef(null);
 
@@ -2362,6 +2396,7 @@
             }
             mapRef.current = null;
             tileLayerRef.current = null;
+            searchMarkerRef.current = null;
           }
         };
       }, []);
@@ -2638,7 +2673,10 @@
           const data = await response.json();
           if (data && data.length > 0) {
             const lat = parseFloat(data[0].lat); const lon = parseFloat(data[0].lon);
-            if (mapRef.current) mapRef.current.flyTo([lat, lon], 16, { duration: 1.5 });
+            if (mapRef.current) {
+              mapRef.current.flyTo([lat, lon], 16, { duration: 1.5 });
+              setLocationPin(mapRef.current, searchMarkerRef, lat, lon, 'search', data[0].display_name || searchQuery);
+            }
           } else { showToast('找不到該地點，請嘗試其他關鍵字', 'error'); }
         } catch (e) { console.error('Search error:', e); } finally { setLoading(false); }
       };
@@ -2649,7 +2687,11 @@
         navigator.geolocation.getCurrentPosition(
           (position) => {
             const lat = position.coords.latitude; const lng = position.coords.longitude;
-            if (mapRef.current) mapRef.current.flyTo([lat, lng], 16, { duration: 1.5 }); setLoading(false);
+            if (mapRef.current) {
+              mapRef.current.flyTo([lat, lng], 16, { duration: 1.5 });
+              setLocationPin(mapRef.current, searchMarkerRef, lat, lng, 'gps', '目前位置');
+            }
+            setLoading(false);
           },
           (error) => { showToast('無法取得位置，請確認瀏覽器定位權限', 'error'); setLoading(false); }, { enableHighAccuracy: true, timeout: 5000 }
         );
