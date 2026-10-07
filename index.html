@@ -629,7 +629,7 @@
 
     // --- 共用 GPX / CSV / 下載工具（原本三個模式各寫一份，抽成單一實作） ---
     // points: [{lat, lon, name?}] ; name 省略時該 <trkpt> 不輸出 <n> 標籤（對應 Mode3 的無名稱寫法）
-    const pointsToGPX = (points, trackName, creator = 'V38.10') => {
+    const pointsToGPX = (points, trackName, creator = 'V38.11') => {
       let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="${creator}">\n  <trk><name>${trackName}</name><trkseg>\n`;
       points.forEach(p => {
         const nameTag = p.name ? `<name>${p.name}</name>` : '';
@@ -1923,7 +1923,7 @@
             const td = pts.reduce((acc, p, i) => i===0 ? 0 : acc + calcDistanceKm(pts[i-1], p), 0);
             setStats({ dist: td.toFixed(2), time: Math.round((td / speed) * 60) });
 
-            const xml = pointsToGPX(pts, `Sweep_${axis}`, 'V38.10_Map_M2');
+            const xml = pointsToGPX(pts, `Sweep_${axis}`, 'V38.11_Map_M2');
             const csv = pointsToCSV(pts);
             setGpxOut(xml); setCsvOut(csv);
             
@@ -2020,7 +2020,7 @@
                 
                 // 即時更新輸出 (含旋轉過後的座標)
                 const normPts = rotatedFlatPath.map(p => ({ lat: Array.isArray(p) ? p[0] : p.lat, lon: Array.isArray(p) ? p[1] : p.lon }));
-                const xml = pointsToGPX(normPts, 'Text_Path', 'V38.10_Map_M2');
+                const xml = pointsToGPX(normPts, 'Text_Path', 'V38.11_Map_M2');
                 const csv = pointsToCSV(normPts);
                 setGpxOut(xml); setCsvOut(csv);
 
@@ -2328,18 +2328,32 @@
     }
 
     // --- 【子元件：模式三 地圖圈地真實 S2 掃蕩】 ---
+    // Mode3 的 Geoman 工具列設定（圈地範圍模式使用；自由路徑模式會移除工具列，切回來時用同一份設定還原）
+    const M3_PM_CONTROLS = { position: 'topleft', drawCircle: false, drawCircleMarker: false, drawPolyline: false, drawText: false, cutPolygon: false, editMode: true, dragMode: true, removalMode: true, drawMarker: false };
+
     function Mode3({ isDark, basemapConfig, setBasemapConfig }) {
       const mapRef = useRef(null);
       const tileLayerRef = useRef(null);
       const searchMarkerRef = useRef(null);
       const drawnLayerRef = useRef(null);
       const resultLayerGroupRef = useRef(null);
+      const freeLayerGroupRef = useRef(null);     // 自由路徑專用圖層群組（點位標記＋連線）
+      const appliedPmModeRef = useRef('AREA');    // 地圖目前實際套用的 Geoman 工具列模式
+      const lastPopupCloseRef = useRef(0);        // 避免「點地圖關閉彈窗」同時被當成新增點位
 
       const [s2Level, setS2Level] = useStickyState('17', 'pikmin_v38.5_m3_level');
       const [gridSource, setGridSource] = useStickyState('S2', 'pikmin_v38.5_m3_gridsource');
       const [customSpacingM, setCustomSpacingM] = useStickyState(30, 'pikmin_v38.5_m3_customspacing');
       const [simplifyPath, setSimplifyPath] = useStickyState(false, 'pikmin_v38.5_m3_simplify');
       const [toast, showToast] = useToast();
+      // 子模式：AREA＝圈地範圍（S2/自訂間距）、FREE＝自由路徑（自己點擊地圖決定點位）
+      const [m3Mode, setM3Mode] = useStickyState('AREA', 'pikmin_v38.5_m3_mode');
+      // 自由路徑點位：刻意不存 localStorage，重開頁面即清空
+      const [freePoints, setFreePoints] = useState([]);
+      const [clearArm, setClearArm] = useState(false);
+      // 地圖建立 effect 是 mount-once，事件處理要讀最新模式只能走 ref（見架構地雷筆記），不能放進依賴陣列
+      const m3ModeRef = useRef(m3Mode);
+      m3ModeRef.current = m3Mode;
       const [pathMode, setPathMode] = useStickyState('vertical-ew', 'pikmin_v38.5_m3_pathmode');
       const [searchQuery, setSearchQuery] = useState('');
       const [drawnCoords, setDrawnCoords] = useState([]);
@@ -2357,9 +2371,19 @@
           mapRef.current = map;
           // 底圖本身改由下面獨立的 basemapConfig effect 負責建立/切換，這裡不再寫死 Carto
 
-          map.pm.addControls({ position: 'topleft', drawCircle: false, drawCircleMarker: false, drawPolyline: false, drawText: false, cutPolygon: false, editMode: true, dragMode: true, removalMode: true, drawMarker: false });
+          map.pm.addControls(M3_PM_CONTROLS);
           map.pm.setLang('zh_tw');
           resultLayerGroupRef.current = L.layerGroup().addTo(map);
+          freeLayerGroupRef.current = L.layerGroup().addTo(map);
+
+          // 自由路徑：點擊地圖新增點位（只在 FREE 模式生效；模式讀 ref）
+          map.on('popupclose', () => { lastPopupCloseRef.current = Date.now(); });
+          map.on('click', (e) => {
+            if (m3ModeRef.current !== 'FREE') return;
+            if (Date.now() - lastPopupCloseRef.current < 200) return; // 這一下是在關彈窗，不算新增
+            const ll = e.latlng.wrap();
+            setFreePoints(prev => [...prev, [ll.lat, ll.lng]]);
+          });
 
           map.on('pm:create', (e) => {
             if (drawnLayerRef.current) map.removeLayer(drawnLayerRef.current);
@@ -2404,6 +2428,7 @@
             mapRef.current = null;
             tileLayerRef.current = null;
             searchMarkerRef.current = null;
+            freeLayerGroupRef.current = null;
           }
         };
       }, []);
@@ -2465,10 +2490,95 @@
         return result;
       };
 
+      // 子模式切換：重置輸出區（兩種模式輸出互斥），並切換 Geoman 工具列 / 圈地多邊形顯示 / 游標
       useEffect(() => {
+        const map = mapRef.current; if (!map) return;
+        setPathData([]); setGpxOut(''); setCsvOut('');
+        if (resultLayerGroupRef.current) resultLayerGroupRef.current.clearLayers();
+        setBadgeText(m3Mode === 'FREE' ? '請在地圖上點擊，依序加入路徑點位' : '請在地圖上繪製範圍');
+        if (m3Mode === appliedPmModeRef.current) return;
+        appliedPmModeRef.current = m3Mode;
+        // 先退出所有 Geoman 進行中的操作，再換工具列
+        try { map.pm.disableDraw(); } catch (e) {}
+        try { map.pm.disableGlobalEditMode(); } catch (e) {}
+        try { map.pm.disableGlobalDragMode(); } catch (e) {}
+        try { map.pm.disableGlobalRemovalMode(); } catch (e) {}
+        const poly = drawnLayerRef.current;
+        if (m3Mode === 'FREE') {
+          try { map.pm.removeControls(); } catch (e) {}
+          try { if (poly && poly.pm) poly.pm.disable(); } catch (e) {}
+          if (poly && map.hasLayer(poly)) map.removeLayer(poly); // 範圍保留在 drawnCoords，切回來還原
+          map.doubleClickZoom.disable(); // 連點兩下不要同時縮放又新增兩個點
+          map.getContainer().style.cursor = 'crosshair';
+        } else {
+          try { map.pm.addControls(M3_PM_CONTROLS); } catch (e) {}
+          if (poly && !map.hasLayer(poly)) map.addLayer(poly);
+          map.doubleClickZoom.enable();
+          map.getContainer().style.cursor = '';
+        }
+      }, [m3Mode]);
+
+      // 自由路徑：依 freePoints 重畫標記/連線，並輸出「點擊的點，原樣」的 GPX/CSV
+      useEffect(() => {
+        const map = mapRef.current; const group = freeLayerGroupRef.current;
+        if (!map || !group) return;
+        group.clearLayers();
+        if (m3Mode !== 'FREE') return;
+        if (freePoints.length === 0) {
+          setPathData([]); setGpxOut(''); setCsvOut('');
+          setBadgeText('請在地圖上點擊，依序加入路徑點位');
+          return;
+        }
+        const normPath = freePoints.map(p => ({ lat: p[0], lon: p[1] }));
+        setPathData(freePoints.map(p => ({ lat: p[0], lng: p[1] })));
+        setGpxOut(pointsToGPX(normPath, 'Free_Path', 'V38.11_Mode3'));
+        setCsvOut(pointsToCSV(normPath));
+        setBadgeText(`自由路徑：共 ${freePoints.length} 個點位`);
+
+        const line = L.polyline(freePoints, { color: isDark ? '#2dd4bf' : '#14b8a6', weight: 3, dashArray: '8, 8', opacity: 0.8, pmIgnore: true, interactive: false }).addTo(group);
+        const markers = [];
+        const n = freePoints.length;
+        freePoints.forEach((p, idx) => {
+          const color = idx === 0 ? '#16a34a' : (idx === n - 1 && n > 1 ? '#dc2626' : '#14b8a6'); // 起點綠／終點紅，跟其他模式一致
+          const icon = L.divIcon({
+            className: '',
+            html: `<div style="width:26px;height:26px;border-radius:50%;background:${color};border:2px solid #fff;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,0.5);">${idx + 1}</div>`,
+            iconSize: [26, 26], iconAnchor: [13, 13]
+          });
+          const m = L.marker(p, { icon, draggable: true, pmIgnore: true });
+          const box = document.createElement('div');
+          const title = document.createElement('div');
+          title.textContent = `點位 ${idx + 1}`; title.style.cssText = 'font-weight:700;margin-bottom:6px;';
+          const delBtn = document.createElement('button');
+          delBtn.textContent = '刪除此點';
+          delBtn.style.cssText = 'padding:4px 10px;border-radius:6px;background:#dc2626;color:#fff;font-size:12px;font-weight:700;cursor:pointer;border:0;';
+          delBtn.onclick = () => { m.closePopup(); setFreePoints(prev => prev.filter((_, i) => i !== idx)); };
+          box.appendChild(title); box.appendChild(delBtn);
+          m.bindPopup(box);
+          m.on('contextmenu', () => { setFreePoints(prev => prev.filter((_, i) => i !== idx)); }); // 桌機右鍵直接刪除
+          m.on('drag', () => { line.setLatLngs(markers.map(x => x.getLatLng())); }); // 拖曳中即時更新連線
+          m.on('dragend', () => {
+            const ll = m.getLatLng().wrap();
+            setFreePoints(prev => prev.map((q, i) => i === idx ? [ll.lat, ll.lng] : q));
+          });
+          markers.push(m);
+          group.addLayer(m);
+        });
+      }, [freePoints, m3Mode, isDark]);
+
+      const undoFreePoint = () => { setFreePoints(prev => prev.slice(0, -1)); };
+      const clearFreePoints = () => {
+        if (freePoints.length === 0) return;
+        if (!clearArm) { setClearArm(true); setTimeout(() => setClearArm(false), 3000); return; } // 二段式確認，避免誤觸清空
+        setFreePoints([]); setClearArm(false);
+      };
+
+      useEffect(() => {
+        if (m3Mode !== 'AREA') return;
         if (drawnCoords.length < 3) return;
         setLoading(true); setBadgeText(gridSource === 'S2' ? '正在運算 S2 網格...' : '正在計算自訂間距格點...');
         setTimeout(() => {
+          if (m3ModeRef.current !== 'AREA') { setLoading(false); return; } // 運算期間已切到自由路徑，丟棄結果
           try {
             let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
             drawnCoords.forEach(p => { if(p[0] < minLat) minLat = p[0]; if(p[0] > maxLat) maxLat = p[0]; if(p[1] < minLng) minLng = p[1]; if(p[1] > maxLng) maxLng = p[1]; });
@@ -2643,7 +2753,7 @@
             const unitLabel = gridSource === 'S2' ? '個 S2 網格' : '個座標點';
 
             const normPath = outputPath.map(p => ({ lat: p.lat, lon: p.lng }));
-            const gpxStr = pointsToGPX(normPath, gridSource === 'S2' ? 'S2_Map_Sweep' : 'Custom_Grid_Sweep', 'V38.10_Mode3');
+            const gpxStr = pointsToGPX(normPath, gridSource === 'S2' ? 'S2_Map_Sweep' : 'Custom_Grid_Sweep', 'V38.11_Mode3');
             const csvStr = pointsToCSV(normPath);
             setGpxOut(gpxStr); setCsvOut(csvStr);
             setBadgeText(simplifyPath
@@ -2671,7 +2781,7 @@
 
           } catch(err) { console.error(err); setBadgeText('運算發生錯誤'); } finally { setLoading(false); }
         }, 50);
-      }, [drawnCoords, s2Level, pathMode, isDark, simplifyPath, gridSource, customSpacingM]);
+      }, [drawnCoords, s2Level, pathMode, isDark, simplifyPath, gridSource, customSpacingM, m3Mode]);
 
       const searchLocation = async () => {
         if (!searchQuery) return; setLoading(true);
@@ -2717,7 +2827,7 @@
       };
       const dlGPX = () => { 
         if(!currentOut) return; const ext = outputFormat === 'gpx' ? 'gpx' : 'txt'; const mime = outputFormat === 'gpx' ? 'text/xml' : 'text/plain';
-        downloadFile(currentOut, `M3_${gridSource === 'S2' ? 'S2_L' + s2Level : 'Grid_' + customSpacingM + 'm'}_${getTimestamp()}.${ext}`, mime);
+        downloadFile(currentOut, `M3_${m3Mode === 'FREE' ? 'Free_' + freePoints.length + 'pts' : (gridSource === 'S2' ? 'S2_L' + s2Level : 'Grid_' + customSpacingM + 'm')}_${getTimestamp()}.${ext}`, mime);
       };
 
       return (
@@ -2740,6 +2850,14 @@
               </div>
 
               <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-semibold block mb-1.5 text-slate-500 dark:text-slate-400">路徑方式</label>
+                  <div className={`flex rounded-lg border overflow-hidden transition-colors duration-300 ${isDark ? 'border-slate-600' : 'border-slate-300'}`}>
+                    <button onClick={()=>setM3Mode('AREA')} className={`flex-1 py-2 text-sm font-bold transition-colors ${m3Mode==='AREA' ? (isDark ? 'bg-teal-600 text-white' : 'bg-teal-500 text-white') : (isDark ? 'bg-slate-900 text-slate-400 hover:text-slate-200' : 'bg-slate-50 text-slate-500 hover:text-slate-700')}`}>圈地範圍</button>
+                    <button onClick={()=>setM3Mode('FREE')} className={`flex-1 py-2 text-sm font-bold transition-colors ${m3Mode==='FREE' ? (isDark ? 'bg-teal-600 text-white' : 'bg-teal-500 text-white') : (isDark ? 'bg-slate-900 text-slate-400 hover:text-slate-200' : 'bg-slate-50 text-slate-500 hover:text-slate-700')}`}>自由路徑</button>
+                  </div>
+                </div>
+                {m3Mode === 'AREA' ? (<>
                 <div>
                   <label className="text-xs font-semibold block mb-1.5 text-slate-500 dark:text-slate-400">格點來源</label>
                   <div className={`flex rounded-lg border overflow-hidden transition-colors duration-300 ${isDark ? 'border-slate-600' : 'border-slate-300'}`}>
@@ -2775,6 +2893,15 @@
                   <input type="checkbox" className="w-4 h-4 accent-teal-500" checked={simplifyPath} onChange={(e)=>setSimplifyPath(e.target.checked)} />
                   <span className="text-sm">只保留轉彎座標（精簡地圖標記與匯出檔案，直線段中間點不重複輸出）</span>
                 </label>
+                </>) : (
+                <div className="space-y-3">
+                  <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">在地圖上依序點擊加入點位，輸出座標即為點擊順序（原樣輸出）。拖曳點位可調整位置，點一下點位可刪除。</p>
+                  <div className="flex gap-2">
+                    <button onClick={undoFreePoint} disabled={freePoints.length === 0} className={`flex-1 px-3 py-2 rounded-lg border text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-white' : 'bg-white hover:bg-slate-50 border-slate-300 text-slate-700'}`}><i className="fas fa-undo mr-1"></i>復原上一點</button>
+                    <button onClick={clearFreePoints} disabled={freePoints.length === 0} className={`flex-1 px-3 py-2 rounded-lg border text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-white' : 'bg-white hover:bg-slate-50 border-slate-300 text-slate-700'} ${clearArm ? '!bg-red-600 !border-red-600 !text-white' : ''}`}><i className="fas fa-trash mr-1"></i>{clearArm ? '再按一次確認' : '清除全部'}</button>
+                  </div>
+                </div>
+                )}
               </div>
             </div>
             
@@ -2792,7 +2919,7 @@
                 </span>
               </div>
               <div className="relative flex-1 rounded-lg border min-h-[80px] transition-colors duration-300 bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 shadow-inner">
-                <textarea className={`w-full h-full bg-transparent text-xs p-3 outline-none custom-scrollbar font-mono ${isDark ? 'text-teal-200' : 'text-slate-700'}`} readOnly value={currentOut} placeholder="請使用右側地圖的左上方多邊形工具，畫出您想涵蓋的範圍..."></textarea>
+                <textarea className={`w-full h-full bg-transparent text-xs p-3 outline-none custom-scrollbar font-mono ${isDark ? 'text-teal-200' : 'text-slate-700'}`} readOnly value={currentOut} placeholder={m3Mode === 'FREE' ? '請在右側地圖上點擊，依序加入路徑點位...' : '請使用右側地圖的左上方多邊形工具，畫出您想涵蓋的範圍...'}></textarea>
                 {currentOut && <div className="absolute bottom-2 right-2 flex gap-1.5"><button onClick={copyToClipboard} className={`p-2 rounded active:scale-95 transition ${isDark ? 'bg-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50'}`}><i className={`fas ${copied?`fa-check ${isDark ? 'text-teal-400' : 'text-slate-800'}`:`fa-copy`} text-sm`}></i></button><button onClick={dlGPX} className={`text-white px-4 py-2 rounded text-sm font-bold active:scale-95 transition shadow-sm ${isDark ? 'bg-teal-600 hover:bg-teal-500' : 'bg-slate-800 hover:bg-slate-700'}`}><i className="fas fa-download mr-1"></i> 下載</button></div>}
               </div>
             </div>
@@ -2832,7 +2959,7 @@
                 <i className={`fab fa-neos text-3xl ${isDark ? 'text-emerald-400' : 'text-slate-800'}`}></i>
                 <div>
                   <h1 className={`text-xl font-black tracking-wider uppercase ${isDark ? 'text-white' : 'text-slate-800'}`}>PIKMIN NAVIGATOR</h1>
-                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-slate-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V38.10</p>
+                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-slate-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V38.11</p>
                 </div>
               </div>
               <div className="flex rounded-lg p-1.5 border w-full sm:w-auto mt-3 sm:mt-0 transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 overflow-x-auto custom-scrollbar">
