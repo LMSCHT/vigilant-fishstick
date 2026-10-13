@@ -29,6 +29,8 @@
 
   <!-- 引入 opentype.js 解析真實字型外框 -->
   <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+  <!-- JSZip：模式一「全部匯出」打包 ZIP 用 -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
   <!-- S2 Geometry 演算法與依賴 -->
   <script src="https://cdn.jsdelivr.net/npm/long@5.2.3/umd/index.js"></script>
@@ -629,7 +631,7 @@
 
     // --- 共用 GPX / CSV / 下載工具（原本三個模式各寫一份，抽成單一實作） ---
     // points: [{lat, lon, name?}] ; name 省略時該 <trkpt> 不輸出 <n> 標籤（對應 Mode3 的無名稱寫法）
-    const pointsToGPX = (points, trackName, creator = 'V38.11') => {
+    const pointsToGPX = (points, trackName, creator = 'V38.13') => {
       let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="${creator}">\n  <trk><name>${trackName}</name><trkseg>\n`;
       points.forEach(p => {
         const nameTag = p.name ? `<name>${p.name}</name>` : '';
@@ -956,6 +958,42 @@
       }, []); 
     }
 
+    // --- 分田：把一組座標分成 N 塊（模式一使用）---
+    const FIELD_COLORS = ['#ef4444','#3b82f6','#f59e0b','#10b981','#a855f7','#ec4899','#14b8a6','#f97316','#6366f1','#84cc16','#06b6d4','#e11d48'];
+    const fieldColor = (f) => FIELD_COLORS[((f || 1) - 1) % FIELD_COLORS.length];
+    // strategy 'SPATIAL'：沿主軸（PCA）遞迴二分，依「點數」等分，得到緊湊且不重疊的區塊；
+    // strategy 'ORDER'：照現有順序切成 N 段連續的點。兩者組內都保留原本的相對順序。
+    // 回傳 [[點...], ...]，n 會被限制在 1~點數 之間。
+    const splitFieldPoints = (pts, n, strategy) => {
+      const total = pts.length;
+      n = Math.max(1, Math.min(n, total));
+      if (n === 1) return [pts.slice()];
+      if (strategy === 'ORDER') {
+        const base = Math.floor(total / n), extra = total % n;
+        const out = []; let start = 0;
+        for (let i = 0; i < n; i++) { const sz = base + (i < extra ? 1 : 0); out.push(pts.slice(start, start + sz)); start += sz; }
+        return out;
+      }
+      const bisect = (items, k) => {
+        if (k === 1) return [items];
+        const k1 = Math.floor(k / 2), k2 = k - k1;
+        const m = items.length;
+        const size1 = Math.round(m * k1 / k); // 保證 size1 >= k1 且 m - size1 >= k2（因 m >= k）
+        const refLat = items.reduce((a, it) => a + it.p.lat, 0) / m;
+        const lonM = getLonToMeters(refLat), latM = CONSTANTS.LAT_TO_M;
+        const xs = items.map(it => it.p.lon * lonM), ys = items.map(it => it.p.lat * latM);
+        const mx = xs.reduce((a, b) => a + b, 0) / m, my = ys.reduce((a, b) => a + b, 0) / m;
+        let sxx = 0, syy = 0, sxy = 0;
+        for (let j = 0; j < m; j++) { const dx = xs[j] - mx, dy = ys[j] - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+        const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy); // 主軸方向：斜向分佈的田也能沿長邊切
+        const c = Math.cos(theta), sn = Math.sin(theta);
+        const proj = items.map((it, j) => ({ it, v: (xs[j] - mx) * c + (ys[j] - my) * sn }));
+        proj.sort((a, b) => a.v - b.v);
+        return [...bisect(proj.slice(0, size1).map(o => o.it), k1), ...bisect(proj.slice(size1).map(o => o.it), k2)];
+      };
+      return bisect(pts.map((p, i) => ({ p, i })), n).map(g => g.slice().sort((a, b) => a.i - b.i).map(o => o.p));
+    };
+
     // --- 【子元件：模式一 精準控花】 ---
     function Mode1({ isDark }) {
       const DIRECTIONS = { 'NW_SE': 'A (左上進)', 'SW_NE': 'B (左下進)', 'NE_SW': 'C (右上進)', 'SE_NW': 'D (右下進)' };
@@ -993,6 +1031,17 @@
       const [diagnosticMsg, setDiagnosticMsg] = useState(null);
       const [loading, setLoading] = useState(false);
 
+      // 分田：points 永遠是「目前正在處理的那組點」（某一塊田，或 activeField=0 時的全部），
+      // 其餘田的點暫存在 parkedPoints，兩邊的點都帶 field 編號。這樣 TSP/診斷/產生路線/統計都不用改。
+      const [fieldCount, setFieldCount] = useState(0);     // 0 = 尚未分田
+      const [activeField, setActiveField] = useState(0);   // 0 = 全部
+      const [parkedPoints, setParkedPoints] = useState([]);
+      const [splitOpen, setSplitOpen] = useState(false);
+      const [splitN, setSplitN] = useState(3);
+      const [splitStrategy, setSplitStrategy] = useStickyState('SPATIAL', 'pikmin_v38.5_m1_splitstrategy');
+      const [genTick, setGenTick] = useState(0);           // 切換/分田後自動產生一次路線的觸發器
+      const [exportProgress, setExportProgress] = useState(null); // null 或 {done,total}：全部匯出進度
+
       const svgRef = useRef(null);
       const [transform, setTransform] = useState({ k: 1, x: 0, y: 0 });
       const transformRef = useRef(transform); transformRef.current = transform;
@@ -1021,6 +1070,7 @@
                 }
               });
               setPoints(calcDirs(newPoints)); 
+              setFieldCount(0); setActiveField(0); setParkedPoints([]); // 重新解析＝放棄舊的分田
               setOutputs({ plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '', pureGpx: '', pureCsv: '' }); 
               resetZoom();
               
@@ -1278,35 +1328,49 @@
         }
       };
 
+      // 依一組點算出三種輸出。generate（目前這塊田）與「全部匯出」共用。
+      // tag：附加在 GPX 軌跡名稱後；only：'all' | 'pure' | 'planting' | 'fruit'，匯出時只算選中的那種，
+      // 省掉不需要的運算（尤其採果偏移最耗時）。
+      const computeOutputs = (pts, tag = '', only = 'all') => {
+        const o = { plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '', pureGpx: '', pureCsv: '' };
+        let unsafe = 0;
+        if (only === 'all' || only === 'planting') {
+          const plantingPts = [];
+          pts.forEach((pt, idx) => {
+            const np = `F${String(idx + 1).padStart(2, '0')}`;
+            getFlwPts(pt, idx, pts).forEach((p, i) => plantingPts.push({ lat: p.l, lon: p.n, name: `${np}_P${i+1}` }));
+          });
+          o.plantingGpx = pointsToGPX(plantingPts, `Planting_${patternType}${tag}`);
+          o.plantingCsv = pointsToCSV(plantingPts);
+        }
+        if (only === 'all' || only === 'fruit') {
+          const offsetPts = calcFruitOffsetPath(pts, harvestDist, offsetSide);
+          const fruitPts = offsetPts.map((fp, idx) => ({ lat: fp.lat, lon: fp.lon, name: `Fruit_P${idx+1}` }));
+          o.fruitGpx = pointsToGPX(fruitPts, `Fruit_Offset${tag}`);
+          o.fruitCsv = pointsToCSV(fruitPts);
+          unsafe = offsetPts.unsafeFallbackCount || 0;
+        }
+        if (only === 'all' || only === 'pure') {
+          const purePts = pts.map((pt, idx) => ({ lat: pt.lat, lon: pt.lon, name: `F${idx+1}` }));
+          o.pureGpx = pointsToGPX(purePts, `Pure_Flowers${tag}`);
+          o.pureCsv = pointsToCSV(purePts);
+        }
+        return { outputs: o, unsafe };
+      };
+
       const generate = useCallback(() => {
         if (!points.length) return;
         setLoading(true);
         setTimeout(() => {
           try {
-            const plantingPts = [];
-            points.forEach((pt, idx) => {
-              const np = `F${String(idx + 1).padStart(2, '0')}`;
-              getFlwPts(pt, idx, points).forEach((p, i) => plantingPts.push({ lat: p.l, lon: p.n, name: `${np}_P${i+1}` }));
-            });
-            const pGpx = pointsToGPX(plantingPts, `Planting_${patternType}`);
-            const pCsv = pointsToCSV(plantingPts);
-
-            const offsetPts = calcFruitOffsetPath(points, harvestDist, offsetSide);
-            const fruitPts = offsetPts.map((fp, idx) => ({ lat: fp.lat, lon: fp.lon, name: `Fruit_P${idx+1}` }));
-            const fGpx = pointsToGPX(fruitPts, 'Fruit_Offset');
-            const fCsv = pointsToCSV(fruitPts);
-
-            const purePts = points.map((pt, idx) => ({ lat: pt.lat, lon: pt.lon, name: `F${idx+1}` }));
-            const puGpx = pointsToGPX(purePts, 'Pure_Flowers');
-            const puCsv = pointsToCSV(purePts);
-
-            setOutputs({ plantingGpx: pGpx, plantingCsv: pCsv, fruitGpx: fGpx, fruitCsv: fCsv, pureGpx: puGpx, pureCsv: puCsv });
+            const { outputs: o, unsafe } = computeOutputs(points);
+            setOutputs(o);
 
             // 採果偏移距離太靠近絕對禁區半徑(45m)時，附近花朵密集處常常擠不出安全繞路空間，
             // 演算法會靜默改用「直接盲連」（可能穿越花朵禁區），外觀上就是路徑繞遠或穿插交叉。
             // 這裡把發生次數攤出來提醒使用者，而不是讓使用者拿到一份看起來正常、實際上有問題的路徑。
-            if (offsetPts.unsafeFallbackCount > 0) {
-              setToastMsg(`⚠️ 採果路徑有 ${offsetPts.unsafeFallbackCount} 段找不到安全繞路，已直接盲連（可能穿越花朵禁區）。目前偏移距離 ${harvestDist}m 太接近 45m 絕對禁區，建議調高到 50m 以上再試一次。`);
+            if (unsafe > 0) {
+              setToastMsg(`⚠️ 採果路徑有 ${unsafe} 段找不到安全繞路，已直接盲連（可能穿越花朵禁區）。目前偏移距離 ${harvestDist}m 太接近 45m 絕對禁區，建議調高到 50m 以上再試一次。`);
               setTimeout(() => setToastMsg(''), 6000);
             }
           } catch (e) {
@@ -1345,6 +1409,87 @@
           console.error("Stats Error:", e);
         }
       }, [points, speedKmH, patternType, oRadius]);
+
+      // --- 分田 ---
+      const EMPTY_OUTPUTS = { plantingGpx: '', plantingCsv: '', fruitGpx: '', fruitCsv: '', pureGpx: '', pureCsv: '' };
+      const flashMsg = (msg, ms = 3500) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), ms); };
+      // 合併成完整清單：依田編號排序，同一塊田內保留相對順序
+      const getAllPoints = () => {
+        if (activeField === 0) return points;
+        return [...points, ...parkedPoints].map((p, i) => ({ p, i }))
+          .sort((a, b) => ((a.p.field || 0) - (b.p.field || 0)) || (a.i - b.i)).map(o => o.p);
+      };
+      const doSplit = () => {
+        const all = getAllPoints();
+        if (all.length < 2) { flashMsg('至少需要 2 個座標才能分田'); return; }
+        const n = Math.min(splitN, all.length);
+        const groups = splitFieldPoints(all.map(p => ({ ...p })), n, splitStrategy)
+          .map((g, gi) => calcDirs(g.map(p => ({ ...p, field: gi + 1 }))));
+        setPoints(groups[0]);
+        setParkedPoints(groups.slice(1).flat());
+        setFieldCount(groups.length); setActiveField(1);
+        setSplitOpen(false); setActiveIdx(null);
+        setOutputs(EMPTY_OUTPUTS); setOutputTab('pure'); resetZoom();
+        setGenTick(t => t + 1);
+        flashMsg(`已分成 ${groups.length} 塊田（${groups.map(g => g.length).join(' / ')} 點）` + (n < splitN ? `，座標不足已由 ${splitN} 塊調整為 ${n} 塊` : ''));
+      };
+      const selectField = (k) => {
+        if (k === activeField) return;
+        const all = getAllPoints();
+        setActiveIdx(null);
+        if (k === 0) { setPoints(all); setParkedPoints([]); }
+        else { setPoints(all.filter(p => p.field === k)); setParkedPoints(all.filter(p => p.field !== k)); }
+        setActiveField(k); setOutputs(EMPTY_OUTPUTS); resetZoom();
+        if (k > 0) setGenTick(t => t + 1); // 選單一塊田時自動產生，立刻拿到該田的座標串
+      };
+      const cancelSplit = () => {
+        const all = getAllPoints().map(({ field, ...rest }) => rest);
+        setPoints(all); setParkedPoints([]); setFieldCount(0); setActiveField(0);
+        setSplitOpen(false); setActiveIdx(null); setOutputs(EMPTY_OUTPUTS); resetZoom();
+      };
+      // 全部匯出：每塊田目前的「選中分頁＋格式」各存一個檔，打包成 ZIP。
+      // 順序：各田依目前的點順序輸出（沒做過 TSP 的田就是切割後的原始順序）。
+      const exportAllFields = async () => {
+        if (fieldCount === 0 || exportProgress) return;
+        if (typeof window.JSZip === 'undefined') { flashMsg('壓縮元件載入失敗，請檢查網路後重新整理頁面'); return; }
+        const all = getAllPoints();
+        const groups = Array.from({ length: fieldCount }, (_, i) => all.filter(p => p.field === i + 1));
+        const only = outputTab; // 'pure' | 'planting' | 'fruit'
+        const ext = outputFormat === 'gpx' ? 'gpx' : 'txt';
+        const typeName = patternType === 'S' ? 'S' : patternType === 'N' ? 'N' : 'O';
+        const tabName = only === 'pure' ? 'Pure' : only === 'planting' ? 'Planting' : 'Fruit';
+        const tabLabel = only === 'pure' ? '純花點' : only === 'planting' ? '種植' : '採果';
+        const total = groups.filter(g => g.length > 0).length;
+        try {
+          const zip = new window.JSZip();
+          let done = 0, unsafeTotal = 0;
+          setExportProgress({ done, total });
+          for (let i = 0; i < groups.length; i++) {
+            const g = groups[i];
+            if (!g.length) continue;
+            await new Promise(r => setTimeout(r, 20)); // 讓出主執行緒，進度才畫得出來、頁面不會整個凍住
+            const { outputs: o, unsafe } = computeOutputs(g, `_Field${i + 1}of${fieldCount}`, only);
+            const content = only === 'pure' ? (outputFormat === 'gpx' ? o.pureGpx : o.pureCsv)
+                          : only === 'planting' ? (outputFormat === 'gpx' ? o.plantingGpx : o.plantingCsv)
+                          : (outputFormat === 'gpx' ? o.fruitGpx : o.fruitCsv);
+            zip.file(`Field${i + 1}of${fieldCount}_${typeName}_${tabName}_${g.length}F.${ext}`, content);
+            unsafeTotal += unsafe;
+            done++;
+            setExportProgress({ done, total });
+          }
+          const blob = await zip.generateAsync({ type: 'blob' });
+          downloadFile(blob, `M1_${typeName}_${tabName}_AllFields${fieldCount}_${getTimestamp()}.zip`, 'application/zip');
+          flashMsg(unsafeTotal > 0
+            ? `⚠️ 已匯出 ${total} 塊田的「${tabLabel}」，但採果路徑共有 ${unsafeTotal} 段找不到安全繞路已直接盲連，建議調高偏移距離。`
+            : `已匯出 ${total} 塊田的「${tabLabel}」（各田依目前點順序輸出）`, unsafeTotal > 0 ? 6000 : 3500);
+        } catch (e) {
+          flashMsg(`匯出錯誤：${e.message}`);
+        } finally {
+          setExportProgress(null);
+        }
+      };
+      const generateRef = useRef(null); generateRef.current = generate;
+      useEffect(() => { if (genTick > 0) generateRef.current(); }, [genTick]);
 
       const handleDiagnostic = useCallback(() => {
         if (points.length <= 1) { setDiagnosticMsg({ type: 'info', text: '請至少輸入兩個座標才能診斷。' }); return; }
@@ -1439,6 +1584,11 @@
         setTransform(cur => ({ k: cur.k, x: 1000 - cur.k * localX, y: 1000 - cur.k * localY }));
       };
       
+      const fieldCounts = (() => {
+        const c = Array(fieldCount).fill(0);
+        [...points, ...parkedPoints].forEach(p => { if (p.field && c[p.field - 1] !== undefined) c[p.field - 1]++; });
+        return c;
+      })();
       const currentOut = outputTab === 'pure' ? (outputFormat === 'gpx' ? outputs.pureGpx : outputs.pureCsv) :
                          outputTab === 'planting' ? (outputFormat === 'gpx' ? outputs.plantingGpx : outputs.plantingCsv) : 
                          (outputFormat === 'gpx' ? outputs.fruitGpx : outputs.fruitCsv);
@@ -1461,7 +1611,8 @@
         const typeName = patternType === 'S' ? 'S' : patternType === 'N' ? 'N' : 'O';
         const tabName = outputTab === 'pure' ? 'Pure' : outputTab === 'planting' ? 'Planting' : 'Fruit';
         const ts = getTimestamp();
-        const filename = `M1_${typeName}_${tabName}_${points.length}F_${ts}.${ext}`;
+        const fieldTag = fieldCount > 0 && activeField > 0 ? `_Field${activeField}of${fieldCount}` : '';
+        const filename = `M1_${typeName}_${tabName}${fieldTag}_${points.length}F_${ts}.${ext}`;
         downloadFile(currentOut, filename, mime);
       };
 
@@ -1513,8 +1664,30 @@
                 <div className="flex gap-2">
                     <button onClick={handleDiagnostic} disabled={loading} className="px-3 py-1.5 rounded text-xs font-bold transition active:scale-95 disabled:opacity-50 border bg-slate-100 dark:bg-rose-500/20 text-slate-600 dark:text-rose-400 hover:bg-slate-200 dark:hover:bg-rose-500/40 border-slate-200 dark:border-transparent"><i className="fas fa-brain"></i> 智慧診斷</button>
                     <button onClick={handleOptimize} disabled={loading} className="px-3 py-1.5 rounded text-xs font-bold transition active:scale-95 flex items-center gap-1 disabled:opacity-50 border bg-slate-100 dark:bg-blue-500/20 text-slate-600 dark:text-blue-400 hover:bg-slate-200 dark:hover:bg-blue-500/40 border-slate-200 dark:border-transparent"><i className="fas fa-bolt"></i> TSP排序</button>
+                    <button onClick={() => setSplitOpen(o => !o)} disabled={loading || (points.length + parkedPoints.length) < 2} className={`px-3 py-1.5 rounded text-xs font-bold transition active:scale-95 flex items-center gap-1 disabled:opacity-50 border ${splitOpen || fieldCount > 0 ? 'bg-emerald-100 dark:bg-emerald-500/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-transparent' : 'bg-slate-100 dark:bg-emerald-500/20 text-slate-600 dark:text-emerald-400 hover:bg-slate-200 dark:hover:bg-emerald-500/40 border-slate-200 dark:border-transparent'}`}><i className="fas fa-th-large"></i> 分田</button>
                 </div>
               </div>
+              {splitOpen && (
+                <div className="mb-2 p-3 rounded-lg border shrink-0 space-y-2 bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-600 dark:text-slate-300">分成幾塊田（共 {points.length + parkedPoints.length} 點）</span>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => setSplitN(n => Math.max(2, n - 1))} className="w-7 h-7 rounded border text-sm font-bold bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 active:scale-95">−</button>
+                      <span className="w-8 text-center text-sm font-bold text-slate-800 dark:text-slate-100">{splitN}</span>
+                      <button onClick={() => setSplitN(n => Math.min(12, n + 1))} className="w-7 h-7 rounded border text-sm font-bold bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 active:scale-95">＋</button>
+                    </div>
+                  </div>
+                  <div className="flex rounded border overflow-hidden border-slate-300 dark:border-slate-600">
+                    <button onClick={() => setSplitStrategy('SPATIAL')} className={`flex-1 py-1.5 text-xs font-bold transition-colors ${splitStrategy==='SPATIAL' ? 'bg-emerald-600 text-white' : 'text-slate-500 dark:text-slate-400'}`}>空間分區</button>
+                    <button onClick={() => setSplitStrategy('ORDER')} className={`flex-1 py-1.5 text-xs font-bold transition-colors ${splitStrategy==='ORDER' ? 'bg-emerald-600 text-white' : 'text-slate-500 dark:text-slate-400'}`}>依順序</button>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{splitStrategy === 'SPATIAL' ? '依空間位置切成緊湊、不重疊的區塊，各塊點數接近。' : '照目前的點順序，切成 N 段連續的點，各段點數接近。'}分完後可再對各塊田分別 TSP 排序。</p>
+                  <div className="flex gap-2">
+                    <button onClick={doSplit} className="flex-1 py-1.5 rounded text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white active:scale-95 transition">{fieldCount > 0 ? '重新分田' : '執行分田'}</button>
+                    {fieldCount > 0 && <button onClick={cancelSplit} className="px-3 py-1.5 rounded text-xs font-bold border bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 active:scale-95 transition">取消分田</button>}
+                  </div>
+                </div>
+              )}
               <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar min-h-0">
                 {points.map((pt, i) => {
                   const safeDir = patternType === 'O' ? (['AUTO', 'CW', 'CCW'].includes(pt.dir) ? pt.dir : 'AUTO') : (['NW_SE', 'SW_NE', 'NE_SW', 'SE_NW'].includes(pt.dir) ? pt.dir : 'NW_SE');
@@ -1525,7 +1698,7 @@
                       onMouseLeave={()=>setActiveIdx(prev => prev === i ? null : prev)}
                       onClick={()=>{setActiveIdx(i); centerOnPoint(i);}}
                       className={`group px-2 py-1 rounded-md text-sm border flex items-center gap-2 transition-all cursor-pointer ${isActive ? 'bg-cyan-50 dark:bg-cyan-500/10 border-cyan-400' : 'bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600 hover:border-cyan-400 dark:hover:border-cyan-400'}`}>
-                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${theme.badgeBg} ${theme.badgeText}`}>{i+1}</span>
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${theme.badgeBg} ${theme.badgeText}`} style={pt.field ? { background: fieldColor(pt.field), color: '#fff' } : undefined}>{i+1}</span>
                       <select className={`border rounded py-0.5 px-1.5 text-xs flex-[2] min-w-0 truncate focus:outline-none transition-colors duration-300 bg-white dark:bg-slate-900 border-slate-200 dark:border-transparent text-slate-800 dark:text-slate-200 ${isDark ? theme.ring : 'focus:border-slate-400'}`} value={safeDir} onChange={(e)=>updatePoint(i,'dir',e.target.value)}>
                         {patternType==='O'?Object.entries(O_DIRECTIONS).map(([k,v])=><option key={k} value={k} className="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200">{v}</option>):Object.entries(DIRECTIONS).map(([k,v])=><option key={k} value={k} className="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200">{v}</option>)}
                       </select>
@@ -1587,6 +1760,19 @@
               </div>
               {/* --- 面板結束 --- */}
 
+              {fieldCount > 0 && (
+                <div className="flex items-start gap-2 mb-1 shrink-0">
+                <div className="flex gap-1.5 overflow-x-auto pb-2 custom-scrollbar flex-1 min-w-0">
+                  <button onClick={() => selectField(0)} className={`px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap transition ${activeField === 0 ? 'bg-slate-700 dark:bg-slate-200 text-white dark:text-slate-900 border-transparent' : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'}`}>全部</button>
+                  {fieldCounts.map((cnt, i) => (
+                    <button key={i} onClick={() => selectField(i + 1)} className={`px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap flex items-center gap-1.5 transition ${activeField === i + 1 ? 'text-white border-transparent' : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'}`} style={activeField === i + 1 ? { background: fieldColor(i + 1) } : undefined}>
+                      <span className="inline-block w-2 h-2 rounded-full" style={{ background: fieldColor(i + 1), boxShadow: activeField === i + 1 ? '0 0 0 1.5px #fff' : 'none' }}></span>田{i + 1} ({cnt})
+                    </button>
+                  ))}
+                </div>
+                <button onClick={exportAllFields} disabled={loading || !!exportProgress} title={`把每塊田目前的「${outputTab === 'pure' ? '純花點' : outputTab === 'planting' ? '種植' : '採果'}」輸出（${outputFormat === 'gpx' ? 'GPX' : '座標'}）各存成一個檔，打包成 ZIP`} className="shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap flex items-center gap-1.5 transition active:scale-95 disabled:opacity-50 bg-emerald-600 hover:bg-emerald-500 text-white border-transparent"><i className="fas fa-file-archive"></i>{exportProgress ? `匯出中 ${exportProgress.done}/${exportProgress.total}` : '全部匯出'}</button>
+                </div>
+              )}
               <button onClick={generate} disabled={loading} className={`w-full font-bold py-2.5 rounded-lg shadow-sm dark:shadow-lg mb-3 active:scale-95 transition text-sm disabled:opacity-50 ${theme.bg} ${theme.hoverBg} text-white`}><i className="fas fa-play"></i> 產生雙路線</button>
               <div className="flex flex-wrap justify-between items-center mb-2 gap-2">
                  <div className="flex rounded p-1 flex-1 transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-transparent">
@@ -1618,6 +1804,7 @@
               {vData && (
                 <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.k})`}>
                   <g transform="translate(100, 100) scale(0.9)">
+                    {parkedPoints.map(pp => { const q = vData.toSVG(pp.lat, pp.lon); return <circle key={`pk${pp.id}`} cx={q.x} cy={q.y} r={vData.rSafe*0.22} fill={fieldColor(pp.field)} opacity="0.45" className="pointer-events-none"/>; })}
                     {vData.pPaths.map((p, i) => i < vData.pPaths.length-1 ? <line key={`l${i}`} x1={p[p.length-1].x} y1={p[p.length-1].y} x2={vData.pPaths[i+1][0].x} y2={vData.pPaths[i+1][0].y} stroke={isDark ? "#64748b" : "#94a3b8"} strokeWidth={2/transform.k} strokeDasharray="10,10"/> : null)}
                     
                     {vData.pPaths.map((p, i) => {
@@ -1645,7 +1832,7 @@
                         <circle 
                             cx={fx} cy={fy} 
                             r={isActive ? vData.rSafe*0.4 : vData.rSafe*0.25} 
-                            fill={isActive ? '#22d3ee' : theme.hexMain} 
+                            fill={isActive ? '#22d3ee' : (points[i].field ? fieldColor(points[i].field) : theme.hexMain)} 
                             stroke={isActive ? '#fff' : 'none'}
                             strokeWidth={isActive ? 1.5/transform.k : 0}
                             className="transition-all cursor-pointer hover:brightness-110 active:scale-90"
@@ -1923,7 +2110,7 @@
             const td = pts.reduce((acc, p, i) => i===0 ? 0 : acc + calcDistanceKm(pts[i-1], p), 0);
             setStats({ dist: td.toFixed(2), time: Math.round((td / speed) * 60) });
 
-            const xml = pointsToGPX(pts, `Sweep_${axis}`, 'V38.11_Map_M2');
+            const xml = pointsToGPX(pts, `Sweep_${axis}`, 'V38.13_Map_M2');
             const csv = pointsToCSV(pts);
             setGpxOut(xml); setCsvOut(csv);
             
@@ -2020,7 +2207,7 @@
                 
                 // 即時更新輸出 (含旋轉過後的座標)
                 const normPts = rotatedFlatPath.map(p => ({ lat: Array.isArray(p) ? p[0] : p.lat, lon: Array.isArray(p) ? p[1] : p.lon }));
-                const xml = pointsToGPX(normPts, 'Text_Path', 'V38.11_Map_M2');
+                const xml = pointsToGPX(normPts, 'Text_Path', 'V38.13_Map_M2');
                 const csv = pointsToCSV(normPts);
                 setGpxOut(xml); setCsvOut(csv);
 
@@ -2531,7 +2718,7 @@
         }
         const normPath = freePoints.map(p => ({ lat: p[0], lon: p[1] }));
         setPathData(freePoints.map(p => ({ lat: p[0], lng: p[1] })));
-        setGpxOut(pointsToGPX(normPath, 'Free_Path', 'V38.11_Mode3'));
+        setGpxOut(pointsToGPX(normPath, 'Free_Path', 'V38.13_Mode3'));
         setCsvOut(pointsToCSV(normPath));
         setBadgeText(`自由路徑：共 ${freePoints.length} 個點位`);
 
@@ -2753,7 +2940,7 @@
             const unitLabel = gridSource === 'S2' ? '個 S2 網格' : '個座標點';
 
             const normPath = outputPath.map(p => ({ lat: p.lat, lon: p.lng }));
-            const gpxStr = pointsToGPX(normPath, gridSource === 'S2' ? 'S2_Map_Sweep' : 'Custom_Grid_Sweep', 'V38.11_Mode3');
+            const gpxStr = pointsToGPX(normPath, gridSource === 'S2' ? 'S2_Map_Sweep' : 'Custom_Grid_Sweep', 'V38.13_Mode3');
             const csvStr = pointsToCSV(normPath);
             setGpxOut(gpxStr); setCsvOut(csvStr);
             setBadgeText(simplifyPath
@@ -2959,7 +3146,7 @@
                 <i className={`fab fa-neos text-3xl ${isDark ? 'text-emerald-400' : 'text-slate-800'}`}></i>
                 <div>
                   <h1 className={`text-xl font-black tracking-wider uppercase ${isDark ? 'text-white' : 'text-slate-800'}`}>PIKMIN NAVIGATOR</h1>
-                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-slate-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V38.11</p>
+                  <p className="text-xs tracking-widest flex items-center gap-1.5 mt-1 text-slate-500 dark:text-slate-400">TACTICAL ROUTE PLANNER V38.13</p>
                 </div>
               </div>
               <div className="flex rounded-lg p-1.5 border w-full sm:w-auto mt-3 sm:mt-0 transition-colors duration-300 bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 overflow-x-auto custom-scrollbar">
